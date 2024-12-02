@@ -70,30 +70,66 @@ def search_rag(query: str) -> str:
 
 
 # Function to generate GPT response
-def fallback_gpt(query: str) -> str:
+def load_faiss_index():
+    """Load FAISS index and document metadata."""
+    try:
+        with open('rails_index.pkl', 'rb') as f:
+            return pickle.load(f)
+    except (FileNotFoundError, pickle.UnpicklingError) as e:
+        st.error("""
+            FAISS index file 'rails_index.pkl' not found or corrupted. 
+            Please ensure you have:
+            1. Generated the index file
+            2. Placed it in the correct directory
+            3. Have proper read permissions
+        """)
+        logger.error(f"FAISS index error: {str(e)}")
+        # Return empty/default values
+        dimension = 384  # dimension for 'all-MiniLM-L6-v2' model
+        empty_index = faiss.IndexFlatL2(dimension)
+        return empty_index, []
+
+# Modified main code to handle missing index
+try:
+    index, doc_chunks = load_faiss_index()
+    if len(doc_chunks) == 0:
+        st.warning("Running in limited mode: RAG features are disabled due to missing index file.")
+except Exception as e:
+    logger.error(f"Error initializing FAISS index: {str(e)}")
+    st.error("Error initializing search index. Running in GPT-only mode.")
+    index = None
+    doc_chunks = []
+
+# Modified search_rag function to handle missing index
+def search_rag(query: str) -> str:
     """
-    Use OpenAI GPT as the base response.
+    Search the RAG system for relevant snippets.
 
     Args:
-        query: The user's query string.
+        query: The search query string.
 
     Returns:
-        GPT's response as a string.
+        Relevant snippets from the data files.
     """
+    if index is None or len(doc_chunks) == 0:
+        return "RAG search is currently unavailable. Running in GPT-only mode."
+        
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a Rails coding assistant."},
-                {"role": "user", "content": query}
-            ],
-            max_tokens=150,
-            temperature=0.7
-        )
-        return response['choices'][0]['message']['content']
+        query_embedding = model.encode([query])
+        k = 3  # Number of results to retrieve
+        D, I = index.search(query_embedding, k)
+
+        results = []
+        for idx in I[0]:
+            if idx == -1 or idx >= len(doc_chunks):
+                continue
+            chunk = doc_chunks[idx]
+            results.append(f"Source: {chunk['source']}\n{chunk['content']}")
+
+        return "\n\n".join(results) if results else "No relevant documentation found."
     except Exception as e:
-        logger.error(f"OpenAI API error: {str(e)}")
-        return f"An error occurred with the GPT API: {str(e)}"
+        logger.error(f"Error in RAG search: {str(e)}")
+        return "An error occurred during the RAG search."
         
 # Function to combine GPT and RAG results
 def augment_with_rag(gpt_response: str, rag_content: str) -> str:
