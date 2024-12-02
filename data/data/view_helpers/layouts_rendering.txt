@@ -1,0 +1,314 @@
+# Layouts and Rendering Guide
+## Overview
+Comprehensive guide for handling layouts, rendering, and view organization in Rails applications, including partials, content_for blocks, and advanced rendering techniques.
+
+## Layout Structure
+### Basic Layout
+```ruby
+# app/views/layouts/application.html.erb
+<!DOCTYPE html>
+<html>
+  <head>
+    <title><%= yield(:title).presence || 'Default Title' %></title>
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+    
+    <%= stylesheet_link_tag 'application', media: 'all', 'data-turbolinks-track': 'reload' %>
+    <%= javascript_pack_tag 'application', 'data-turbolinks-track': 'reload' %>
+    <%= yield(:head) %>
+  </head>
+  
+  <body class="<%= body_classes %>">
+    <%= render 'shared/header' %>
+    
+    <main class="container">
+      <%= render 'shared/flash_messages' %>
+      <%= yield %>
+    </main>
+    
+    <%= render 'shared/footer' %>
+    <%= yield(:scripts) %>
+  </body>
+</html>
+```
+
+## Content Sections
+### Content Blocks
+```ruby
+# app/views/layouts/application.html.erb
+<div class="sidebar">
+  <%= content_for?(:sidebar) ? yield(:sidebar) : render('shared/default_sidebar') %>
+</div>
+
+# app/views/posts/show.html.erb
+<% content_for :title do %>
+  <%= @post.title %> | My Blog
+<% end %>
+
+<% content_for :sidebar do %>
+  <div class="post-metadata">
+    <h3>Author</h3>
+    <%= render 'users/profile', user: @post.author %>
+    
+    <h3>Categories</h3>
+    <%= render @post.categories %>
+  </div>
+<% end %>
+```
+
+## Partial Rendering
+### Advanced Partials
+```ruby
+# app/views/shared/_card.html.erb
+<div class="card <%= local_assigns[:class] %>">
+  <% if local_assigns[:header].present? %>
+    <div class="card-header">
+      <%= header %>
+    </div>
+  <% end %>
+  
+  <div class="card-body">
+    <%= yield %>
+  </div>
+  
+  <% if local_assigns[:footer].present? %>
+    <div class="card-footer">
+      <%= footer %>
+    </div>
+  <% end %>
+</div>
+
+# Usage in views
+<%= render layout: 'shared/card', locals: { class: 'custom-card' } do %>
+  <% header do %>
+    <h2>Card Title</h2>
+  <% end %>
+  
+  <p>Card content goes here</p>
+  
+  <% footer do %>
+    <button>Action</button>
+  <% end %>
+<% end %>
+```
+
+## Layout Inheritance
+### Nested Layouts
+```ruby
+# app/views/layouts/admin.html.erb
+<% content_for :content do %>
+  <div class="admin-layout">
+    <%= render 'admin/sidebar' %>
+    
+    <div class="admin-content">
+      <div class="admin-header">
+        <%= render 'admin/breadcrumbs' %>
+        <%= yield :admin_actions %>
+      </div>
+      
+      <%= yield %>
+    </div>
+  </div>
+<% end %>
+
+<%= render template: 'layouts/application' %>
+
+# app/controllers/admin/base_controller.rb
+class Admin::BaseController < ApplicationController
+  layout 'admin'
+  
+  before_action :require_admin
+end
+```
+
+## Conditional Rendering
+### Dynamic Layout Selection
+```ruby
+# app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  layout :determine_layout
+  
+  private
+  
+  def determine_layout
+    return 'admin' if admin_user?
+    return 'mobile' if mobile_device?
+    'application'
+  end
+  
+  def mobile_device?
+    request.user_agent =~ /Mobile|webOS/
+  end
+end
+
+# app/controllers/posts_controller.rb
+class PostsController < ApplicationController
+  def show
+    @post = Post.find(params[:id])
+    
+    respond_to do |format|
+      format.html
+      format.json { render json: @post }
+      format.pdf { render pdf: generate_pdf }
+      format.js { render layout: false }
+    end
+  end
+end
+```
+
+## View Components
+### Component Organization
+```ruby
+# app/components/card_component.rb
+class CardComponent < ViewComponent::Base
+  attr_reader :title, :content
+  
+  def initialize(title:, content:)
+    @title = title
+    @content = content
+  end
+  
+  def render?
+    content.present?
+  end
+  
+  private
+  
+  def card_classes
+    ['card', title.present? ? 'with-header' : nil].compact.join(' ')
+  end
+end
+
+# app/components/card_component.html.erb
+<div class="<%= card_classes %>">
+  <% if title.present? %>
+    <div class="card-header">
+      <h3><%= title %></h3>
+    </div>
+  <% end %>
+  
+  <div class="card-body">
+    <%= content %>
+  </div>
+</div>
+```
+
+## Asset Management
+### Asset Organization
+```ruby
+# app/views/layouts/application.html.erb
+<%= javascript_pack_tag "application" %>
+<%= stylesheet_pack_tag "application" %>
+
+<% if content_for?(:page_specific_styles) %>
+  <%= yield(:page_specific_styles) %>
+<% end %>
+
+# app/javascript/packs/application.js
+import '../stylesheets/application'
+import './shared/tooltips'
+import './shared/modals'
+
+document.addEventListener('turbolinks:load', () => {
+  // Initialize common components
+})
+
+# app/javascript/stylesheets/application.scss
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+@import "./components/buttons";
+@import "./components/forms";
+```
+
+## Cache Management
+### Fragment Caching
+```ruby
+# app/views/posts/index.html.erb
+<% cache_if user_signed_in?, ["v1", @posts] do %>
+  <div class="posts-grid">
+    <% @posts.each do |post| %>
+      <% cache ["v1", post] do %>
+        <%= render "post", post: post %>
+      <% end %>
+    </div>
+  <% end %>
+<% end %>
+
+# app/views/shared/_navigation.html.erb
+<% cache_unless current_user, "main_nav" do %>
+  <nav class="main-navigation">
+    <%= render partial: "shared/nav_item", collection: navigation_items %>
+  </nav>
+<% end %>
+```
+
+## Error Pages
+### Custom Error Templates
+```ruby
+# app/views/errors/not_found.html.erb
+<% content_for :title, "Page Not Found" %>
+
+<div class="error-page">
+  <h1>404</h1>
+  <p>The page you're looking for could not be found.</p>
+  <%= link_to "Go Home", root_path, class: "button" %>
+</div>
+
+# app/views/errors/internal_server_error.html.erb
+<% content_for :title, "Server Error" %>
+
+<div class="error-page">
+  <h1>500</h1>
+  <p>Something went wrong. Please try again later.</p>
+  <% if Rails.env.development? %>
+    <div class="error-details">
+      <%= debug(@error) %>
+    </div>
+  <% end %>
+</div>
+```
+
+## Performance Optimization
+### View Optimization
+```ruby
+# config/environments/production.rb
+config.action_view.cache_template_loading = true
+config.action_view.automatically_disable_submit_tag = true
+
+# app/views/shared/_performance_critical.html.erb
+<% cache_if Rails.env.production?, "performance_critical_section" do %>
+  <div class="performance-critical">
+    <%= render_async dashboard_stats_path %>
+    <%= render_async user_activity_path %>
+  </div>
+<% end %>
+
+# Using HTTP caching
+<% if stale?(@post) %>
+  <%= render @post %>
+<% end %>
+```
+
+## Testing
+### View Testing
+```ruby
+# spec/views/posts/show.html.erb_spec.rb
+RSpec.describe "posts/show", type: :view do
+  let(:post) { create(:post) }
+  
+  before do
+    assign(:post, post)
+    render
+  end
+  
+  it "displays post title" do
+    expect(rendered).to have_selector("h1", text: post.title)
+  end
+  
+  it "renders correct layout elements" do
+    expect(view.content_for(:title)).to include(post.title)
+    expect(rendered).to have_selector(".post-metadata")
+  end
+end
+```

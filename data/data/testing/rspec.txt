@@ -1,0 +1,312 @@
+# RSpec Testing Guide
+## Overview
+Comprehensive guide for using RSpec in Rails applications, covering configuration, testing patterns, shared examples, custom matchers, and best practices.
+
+## Basic Configuration
+### Setup
+```ruby
+# spec/rails_helper.rb
+require 'spec_helper'
+require 'rspec/rails'
+require 'capybara/rspec'
+require 'database_cleaner'
+
+RSpec.configure do |config|
+  config.use_transactional_fixtures = false
+  config.infer_spec_type_from_file_location!
+  
+  config.before(:suite) do
+    DatabaseCleaner.clean_with(:truncation)
+  end
+  
+  config.before(:each) do
+    DatabaseCleaner.strategy = :transaction
+  end
+  
+  config.before(:each, js: true) do
+    DatabaseCleaner.strategy = :truncation
+  end
+end
+```
+
+## Model Specs
+### Basic Model Testing
+```ruby
+# spec/models/user_spec.rb
+RSpec.describe User, type: :model do
+  subject { build(:user) }
+  
+  describe "validations" do
+    it { should validate_presence_of(:email) }
+    it { should validate_uniqueness_of(:email).case_insensitive }
+    it { should validate_presence_of(:password) }
+    it { should validate_length_of(:password).is_at_least(6) }
+  end
+  
+  describe "associations" do
+    it { should have_many(:posts).dependent(:destroy) }
+    it { should have_one(:profile).dependent(:destroy) }
+    it { should belong_to(:organization).optional }
+  end
+  
+  describe "callbacks" do
+    it "normalizes email before validation" do
+      user = build(:user, email: "USER@EXAMPLE.COM")
+      user.valid?
+      expect(user.email).to eq("user@example.com")
+    end
+  end
+  
+  describe "#full_name" do
+    let(:user) { build(:user, first_name: "John", last_name: "Doe") }
+    
+    it "returns the combined first and last name" do
+      expect(user.full_name).to eq("John Doe")
+    end
+  end
+end
+```
+
+## Controller Specs
+### Request Testing
+```ruby
+# spec/requests/posts_spec.rb
+RSpec.describe "Posts", type: :request do
+  let(:user) { create(:user) }
+  let(:valid_attributes) { attributes_for(:post) }
+  
+  describe "GET /posts" do
+    before do
+      sign_in user
+      create_list(:post, 3, user: user)
+    end
+    
+    it "returns successful response" do
+      get posts_path
+      expect(response).to be_successful
+    end
+    
+    it "assigns @posts" do
+      get posts_path
+      expect(assigns(:posts).count).to eq(3)
+    end
+  end
+  
+  describe "POST /posts" do
+    context "with valid parameters" do
+      it "creates a new post" do
+        expect {
+          post posts_path, params: { post: valid_attributes }
+        }.to change(Post, :count).by(1)
+      end
+      
+      it "redirects to the created post" do
+        post posts_path, params: { post: valid_attributes }
+        expect(response).to redirect_to(Post.last)
+      end
+    end
+    
+    context "with invalid parameters" do
+      it "does not create a new post" do
+        expect {
+          post posts_path, params: { post: { title: "" } }
+        }.not_to change(Post, :count)
+      end
+      
+      it "renders the new template" do
+        post posts_path, params: { post: { title: "" } }
+        expect(response).to render_template(:new)
+      end
+    end
+  end
+end
+```
+
+## Feature Specs
+### Integration Testing
+```ruby
+# spec/features/user_authentication_spec.rb
+RSpec.describe "User Authentication", type: :feature do
+  let(:user) { create(:user) }
+  
+  describe "login process" do
+    before { visit new_user_session_path }
+    
+    context "with valid credentials" do
+      it "logs in successfully" do
+        fill_in "Email", with: user.email
+        fill_in "Password", with: user.password
+        click_button "Log in"
+        
+        expect(page).to have_content("Signed in successfully")
+        expect(current_path).to eq(root_path)
+      end
+    end
+    
+    context "with invalid credentials" do
+      it "shows error message" do
+        fill_in "Email", with: user.email
+        fill_in "Password", with: "wrong_password"
+        click_button "Log in"
+        
+        expect(page).to have_content("Invalid Email or password")
+        expect(current_path).to eq(new_user_session_path)
+      end
+    end
+  end
+  
+  describe "signup process", js: true do
+    it "creates a new user account" do
+      visit new_user_registration_path
+      
+      fill_in "Email", with: "new@example.com"
+      fill_in "Password", with: "password123"
+      fill_in "Password confirmation", with: "password123"
+      
+      expect {
+        click_button "Sign up"
+        expect(page).to have_content("Welcome!")
+      }.to change(User, :count).by(1)
+    end
+  end
+end
+```
+
+## Shared Examples
+### Reusable Test Patterns
+```ruby
+# spec/support/shared_examples/api_authentication.rb
+RSpec.shared_examples "requires authentication" do
+  context "when user is not authenticated" do
+    it "returns unauthorized status" do
+      subject
+      expect(response).to have_http_status(:unauthorized)
+    end
+    
+    it "returns error message" do
+      subject
+      expect(json_response[:error]).to eq("You need to sign in first")
+    end
+  end
+end
+
+# spec/support/shared_examples/sortable.rb
+RSpec.shared_examples "sortable model" do
+  it { should have_db_column(:position).of_type(:integer) }
+  it { should have_db_index(:position) }
+  
+  describe "#move_to_top" do
+    it "changes position to 1" do
+      instance = described_class.create
+      instance.move_to_top
+      expect(instance.position).to eq(1)
+    end
+  end
+end
+```
+
+## Custom Matchers
+### Test Helpers
+```ruby
+# spec/support/matchers/json_matchers.rb
+RSpec::Matchers.define :have_json_structure do |expected|
+  match do |actual|
+    @actual = JSON.parse(actual)
+    have_keys?(@actual, expected)
+  end
+  
+  def have_keys?(actual, expected)
+    expected.all? do |key, value|
+      actual.key?(key.to_s) &&
+        (value.is_a?(Hash) ? have_keys?(actual[key.to_s], value) : true)
+    end
+  end
+end
+
+# spec/support/matchers/time_matchers.rb
+RSpec::Matchers.define :be_within_seconds_of do |expected_time, seconds = 1|
+  match do |actual_time|
+    (actual_time - expected_time).abs <= seconds
+  end
+end
+```
+
+## Service Testing
+### Service Objects
+```ruby
+# spec/services/payment_processor_spec.rb
+RSpec.describe PaymentProcessor do
+  let(:user) { create(:user) }
+  let(:order) { create(:order, user: user) }
+  let(:service) { described_class.new(order) }
+  
+  describe "#process" do
+    context "with valid payment details" do
+      it "processes the payment successfully" do
+        VCR.use_cassette("successful_payment") do
+          result = service.process
+          expect(result).to be_success
+          expect(order.reload).to be_paid
+        end
+      end
+      
+      it "creates a payment record" do
+        expect {
+          service.process
+        }.to change(Payment, :count).by(1)
+      end
+    end
+    
+    context "with invalid payment details" do
+      before { allow(service).to receive(:valid?).and_return(false) }
+      
+      it "returns error result" do
+        result = service.process
+        expect(result).not_to be_success
+        expect(result.errors).to include("Invalid payment details")
+      end
+    end
+  end
+end
+```
+
+## Job Testing
+### Background Jobs
+```ruby
+# spec/jobs/email_notification_job_spec.rb
+RSpec.describe EmailNotificationJob, type: :job do
+  include ActiveJob::TestHelper
+  
+  let(:user) { create(:user) }
+  let(:notification) { create(:notification, user: user) }
+  
+  describe "#perform" do
+    it "sends email notification" do
+      expect {
+        described_class.perform_now(notification.id)
+      }.to change { ActionMailer::Base.deliveries.count }.by(1)
+    end
+    
+    it "updates notification status" do
+      described_class.perform_now(notification.id)
+      expect(notification.reload).to be_sent
+    end
+    
+    context "when notification doesn't exist" do
+      it "handles missing notification gracefully" do
+        expect {
+          described_class.perform_now(-1)
+        }.not_to raise_error
+      end
+    end
+  end
+  
+  describe "job scheduling" do
+    it "enqueues job" do
+      expect {
+        described_class.perform_later(notification.id)
+      }.to have_enqueued_job.with(notification.id)
+    end
+  end
+end
+```

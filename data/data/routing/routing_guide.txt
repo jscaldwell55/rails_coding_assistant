@@ -1,0 +1,306 @@
+# Rails Routing Guide
+## Overview
+Comprehensive guide for configuring and optimizing routes in Rails applications, including RESTful routing, namespacing, constraints, and advanced routing techniques.
+
+## Basic Routing
+### RESTful Resources
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  # Basic resource routing
+  resources :posts do
+    resources :comments
+  end
+  
+  # Custom collection and member routes
+  resources :users do
+    collection do
+      get :search
+      post :bulk_import
+    end
+    
+    member do
+      patch :activate
+      delete :purge_data
+    end
+  end
+end
+```
+
+## Advanced Routing
+### Namespaced Routes
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  # Admin namespace
+  namespace :admin do
+    resources :users
+    resources :posts
+    
+    # Dashboard routes
+    get 'dashboard', to: 'dashboard#show'
+    get 'analytics', to: 'dashboard#analytics'
+  end
+  
+  # API versioning
+  namespace :api do
+    namespace :v1 do
+      resources :users
+      resources :posts
+    end
+    
+    namespace :v2 do
+      resources :users
+      resources :posts
+    end
+  end
+end
+```
+
+## Route Constraints
+### Custom Constraints
+```ruby
+# app/constraints/admin_constraint.rb
+class AdminConstraint
+  def matches?(request)
+    return false unless request.session[:user_id]
+    user = User.find_by(id: request.session[:user_id])
+    user&.admin?
+  end
+end
+
+# config/routes.rb
+Rails.application.routes.draw do
+  # Admin routes with constraint
+  constraints AdminConstraint.new do
+    namespace :admin do
+      resources :settings
+    end
+  end
+  
+  # Subdomain constraints
+  constraints subdomain: 'api' do
+    scope module: 'api' do
+      resources :users
+    end
+  end
+end
+```
+
+## Route Organization
+### Concern-based Routes
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  concern :commentable do
+    resources :comments
+  end
+  
+  concern :taggable do
+    resources :tags
+  end
+  
+  resources :posts, concerns: [:commentable, :taggable] do
+    resources :likes
+  end
+  
+  resources :articles, concerns: [:commentable, :taggable]
+end
+```
+
+## Route Optimization
+### Route Priority
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  # High-priority routes first
+  get '/health_check', to: 'monitoring#health_check'
+  
+  # Cached static pages
+  get '/about', to: 'pages#about', constraints: lambda { |req|
+    Rails.cache.exist?("page/about")
+  }
+  
+  # Dynamic routes
+  resources :posts
+  
+  # Catch-all route last
+  match '*path', to: 'errors#not_found', via: :all
+end
+```
+
+## Route Helpers
+### Custom URL Helpers
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  get '/p/:id', to: 'posts#show', as: :short_post
+  
+  resources :users do
+    member do
+      get :profile, path: 'p'
+    end
+  end
+end
+
+# Custom URL helper
+module RoutingHelper
+  def profile_path_for(user)
+    profile_user_path(user, format: user.profile_format)
+  end
+end
+```
+
+## Route Mounting
+### Engine Mounting
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  # Mount Sidekiq web interface
+  authenticate :user, lambda { |u| u.admin? } do
+    mount Sidekiq::Web => '/sidekiq'
+  end
+  
+  # Mount custom engine
+  mount MyEngine::Engine, at: '/my_engine'
+end
+```
+
+## Internationalization
+### Localized Routes
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  scope "/:locale" do
+    resources :posts
+    resources :users
+  end
+  
+  # Default locale fallback
+  root to: redirect("/#{I18n.default_locale}")
+end
+
+# app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  before_action :set_locale
+  
+  private
+  
+  def set_locale
+    I18n.locale = params[:locale] || I18n.default_locale
+  end
+  
+  def default_url_options
+    { locale: I18n.locale }
+  end
+end
+```
+
+## Route Testing
+### Route Specs
+```ruby
+# spec/routing/posts_routing_spec.rb
+require "rails_helper"
+
+RSpec.describe PostsController, type: :routing do
+  describe "routing" do
+    it "routes to #index" do
+      expect(get: "/posts").to route_to("posts#index")
+    end
+    
+    it "routes to #show" do
+      expect(get: "/posts/1").to route_to("posts#show", id: "1")
+    end
+    
+    it "routes to named route" do
+      expect(get: "/p/1").to route_to(
+        controller: "posts",
+        action: "show",
+        id: "1"
+      )
+    end
+  end
+end
+```
+
+## Performance
+### Route Caching
+```ruby
+# config/environments/production.rb
+config.eager_load = true
+
+# Custom route constraint with caching
+class CachedPagesConstraint
+  def matches?(request)
+    key = "page/#{request.path}"
+    Rails.cache.exist?(key)
+  end
+end
+
+# config/routes.rb
+Rails.application.routes.draw do
+  constraints CachedPagesConstraint.new do
+    get '*path', to: 'pages#cached'
+  end
+end
+```
+
+## Error Handling
+### Custom Error Routes
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  # Custom error pages
+  match "/404", to: "errors#not_found", via: :all
+  match "/500", to: "errors#internal_server_error", via: :all
+  
+  # Custom error handling for API
+  namespace :api do
+    match "*path",
+      to: "errors#route_not_found",
+      via: :all,
+      constraints: lambda { |req|
+        req.format.json?
+      }
+  end
+end
+```
+
+## Advanced Features
+### Direct Routes
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  direct :cdn do |file|
+    "https://cdn.example.com/#{file}"
+  end
+  
+  direct :google do
+    "https://google.com"
+  end
+end
+
+# Usage in views
+<%= link_to "Image", cdn_url("image.jpg") %>
+<%= link_to "Google", google_url %>
+```
+
+## Security
+### SSL Requirements
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  # Force SSL for sensitive routes
+  scope constraints: { protocol: 'https' } do
+    resources :users
+    resources :payments
+  end
+  
+  # Rate limiting for API routes
+  scope constraints: ApiRateLimitConstraint.new do
+    namespace :api do
+      resources :users
+    end
+  end
+end
+```

@@ -1,0 +1,323 @@
+# Capistrano Deployment Guide
+
+## Basic Setup
+
+### Initial Configuration
+```ruby
+# Gemfile
+group :development do
+  gem 'capistrano', '~> 3.17'
+  gem 'capistrano-rails'
+  gem 'capistrano-rbenv'
+  gem 'capistrano-bundler'
+  gem 'capistrano3-puma'
+end
+
+# Generate Capistrano files
+# cap install
+
+# config/deploy.rb
+lock "~> 3.17.0"
+
+set :application, "your_app_name"
+set :repo_url, "git@github.com:username/repository.git"
+
+# Deploy to
+set :deploy_to, "/var/www/#{fetch(:application)}"
+
+# Default branch is :master
+set :branch, `git rev-parse --abbrev-ref HEAD`.chomp
+
+# Default value for :linked_files
+append :linked_files, "config/database.yml", "config/master.key"
+
+# Default value for linked dirs
+append :linked_dirs, "log", "tmp/pids", "tmp/cache", "tmp/sockets", "public/system", "vendor", "storage"
+
+# Default value for keep_releases is 5
+set :keep_releases, 5
+
+# Rbenv settings
+set :rbenv_type, :user
+set :rbenv_ruby, '3.2.0'
+set :rbenv_prefix, "RBENV_ROOT=#{fetch(:rbenv_path)} RBENV_VERSION=#{fetch(:rbenv_ruby)} #{fetch(:rbenv_path)}/bin/rbenv exec"
+```
+
+### Environment Configuration
+```ruby
+# config/deploy/production.rb
+server "your.server.com",
+  user: "deploy",
+  roles: %w{app db web},
+  ssh_options: {
+    user: "deploy",
+    keys: %w(~/.ssh/id_rsa),
+    forward_agent: true,
+    auth_methods: %w(publickey)
+  }
+
+# config/deploy/staging.rb
+server "staging.server.com",
+  user: "deploy",
+  roles: %w{app db web},
+  ssh_options: {
+    user: "deploy",
+    keys: %w(~/.ssh/id_rsa),
+    forward_agent: true,
+    auth_methods: %w(publickey)
+  }
+```
+
+## Advanced Configuration
+
+### Custom Tasks
+```ruby
+namespace :deploy do
+  desc 'Restart application'
+  task :restart do
+    on roles(:app), in: :sequence, wait: 5 do
+      execute :touch, release_path.join('tmp/restart.txt')
+    end
+  end
+
+  desc 'Clear application cache'
+  task :clear_cache do
+    on roles(:web) do
+      within release_path do
+        execute :rake, 'tmp:cache:clear'
+      end
+    end
+  end
+
+  desc 'Run database migrations'
+  task :migrate do
+    on roles(:db) do
+      within release_path do
+        execute :rake, 'db:migrate RAILS_ENV=production'
+      end
+    end
+  end
+
+  after :publishing, :restart
+  after :restart, :clear_cache
+end
+```
+
+### Puma Configuration
+```ruby
+# config/deploy.rb
+set :puma_threads, [4, 16]
+set :puma_workers, 0
+set :puma_bind, "unix://#{shared_path}/tmp/sockets/#{fetch(:application)}-puma.sock"
+set :puma_state, "#{shared_path}/tmp/pids/puma.state"
+set :puma_pid, "#{shared_path}/tmp/pids/puma.pid"
+set :puma_access_log, "#{release_path}/log/puma.access.log"
+set :puma_error_log, "#{release_path}/log/puma.error.log"
+set :puma_preload_app, true
+set :puma_worker_timeout, nil
+set :puma_init_active_record, true
+
+namespace :puma do
+  desc 'Create Puma dirs'
+  task :create_dirs do
+    on roles(:app) do
+      execute "mkdir #{shared_path}/tmp/sockets -p"
+      execute "mkdir #{shared_path}/tmp/pids -p"
+    end
+  end
+
+  before :start, :create_dirs
+end
+```
+
+### Asset Pipeline
+```ruby
+# config/deploy.rb
+set :assets_prefix, 'packs'
+set :assets_manifests, ['app/assets/config/manifest.js']
+
+namespace :deploy do
+  namespace :assets do
+    task :backup_manifest do
+      on roles(fetch(:assets_roles)) do
+        within release_path do
+          execute :cp,
+            release_path.join('public', fetch(:assets_prefix), '.sprockets-manifest*'),
+            release_path.join('assets_manifest_backup')
+        end
+      end
+    end
+  end
+end
+```
+
+### Database Configuration
+```ruby
+namespace :deploy do
+  namespace :db do
+    desc 'Backup database before migration'
+    task :backup do
+      on roles(:db) do
+        within release_path do
+          execute :rake, 'db:backup RAILS_ENV=production'
+        end
+      end
+    end
+
+    desc 'Seed database data'
+    task :seed do
+      on roles(:db) do
+        within release_path do
+          execute :rake, 'db:seed RAILS_ENV=production'
+        end
+      end
+    end
+
+    before 'deploy:migrate', 'deploy:db:backup'
+  end
+end
+```
+
+## Deployment Workflows
+
+### Basic Deployment
+```bash
+# Deploy to staging
+cap staging deploy
+
+# Deploy to production
+cap production deploy
+
+# Deploy specific branch
+cap production deploy BRANCH=feature/branch
+
+# Deploy with migrations
+cap production deploy:migrate
+
+# Rollback deployment
+cap production deploy:rollback
+```
+
+### Zero-Downtime Deployment
+```ruby
+# config/deploy.rb
+set :puma_preload_app, true
+set :puma_worker_timeout, nil
+set :puma_init_active_record, true
+
+namespace :deploy do
+  desc 'Zero-downtime restart'
+  task :zero_downtime do
+    on roles(:app) do
+      execute :kill, "-USR2 `cat #{fetch(:puma_pid)}`"
+    end
+  end
+end
+```
+
+### Maintenance Mode
+```ruby
+namespace :maintenance do
+  desc 'Enter maintenance mode'
+  task :enable do
+    on roles(:web) do
+      within release_path do
+        execute :touch, 'tmp/maintenance.txt'
+      end
+    end
+  end
+
+  desc 'Exit maintenance mode'
+  task :disable do
+    on roles(:web) do
+      within release_path do
+        execute :rm, 'tmp/maintenance.txt'
+      end
+    end
+  end
+end
+```
+
+## Monitoring and Logging
+
+### Deployment Logging
+```ruby
+# config/deploy.rb
+set :log_level, :debug
+set :format, :pretty
+set :format_options, command_output: true, log_file: "log/capistrano.log"
+
+# Custom logger
+require 'logger'
+logger = Logger.new('log/capistrano.log')
+logger.level = Logger::INFO
+set :logger, logger
+```
+
+### Health Checks
+```ruby
+namespace :deploy do
+  desc 'Check deployment health'
+  task :health_check do
+    on roles(:web) do
+      within release_path do
+        execute :curl, "-s --fail http://localhost/health_check"
+      end
+    end
+  end
+
+  after :publishing, 'deploy:health_check'
+end
+```
+
+## Security
+
+### Secret Management
+```ruby
+# config/deploy.rb
+set :linked_files, %w{config/master.key config/credentials/production.key}
+
+namespace :deploy do
+  namespace :check do
+    before :linked_files, :set_master_key do
+      on roles(:app) do
+        unless test("[ -f #{shared_path}/config/master.key ]")
+          upload! 'config/master.key', "#{shared_path}/config/master.key"
+        end
+      end
+    end
+  end
+end
+```
+
+### SSH Configuration
+```ruby
+# config/deploy.rb
+set :ssh_options, {
+  keys: %w(~/.ssh/id_rsa),
+  forward_agent: true,
+  auth_methods: %w(publickey),
+  verify_host_key: :secure
+}
+
+# Use SSH-agent forwarding
+set :ssh_options, {
+  forward_agent: true,
+  user: 'deploy',
+  keys: %w(~/.ssh/id_rsa)
+}
+```
+
+## Best Practices
+
+1. Use environment-specific configurations
+2. Implement proper rollback strategies
+3. Use SSH keys for authentication
+4. Keep sensitive data out of version control
+5. Regular backup strategy
+6. Monitor deployment logs
+7. Implement health checks
+8. Use maintenance mode when needed
+9. Configure proper permissions
+10. Regular cleanup of old releases
+

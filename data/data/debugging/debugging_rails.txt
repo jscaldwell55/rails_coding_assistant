@@ -1,0 +1,316 @@
+# Comprehensive Rails Debugging Guide
+
+## Built-in Debugging Tools
+
+### Debug Method
+```ruby
+# In any Ruby code
+debug(params)
+debug(@user)
+pp @complex_object
+```
+
+### Debugger Statement
+```ruby
+class UsersController < ApplicationController
+  def show
+    @user = User.find(params[:id])
+    debugger  # Code execution will pause here
+    @posts = @user.posts
+  end
+end
+```
+
+### Rails Console
+```ruby
+# Start console in specific environment
+rails console -e production
+
+# Sandbox mode (changes won't be saved)
+rails console --sandbox
+
+# Useful console methods
+reload!  # Reload code changes
+app.get '/users'  # Make HTTP requests
+helper.number_to_currency(100)  # Test helpers
+```
+
+## Debugging Gems Configuration
+
+### Pry
+```ruby
+# Gemfile
+group :development, :test do
+  gem 'pry-rails'
+  gem 'pry-byebug'
+  gem 'pry-stack_explorer'
+end
+
+# Usage in code
+binding.pry
+
+# Pry commands
+next      # Step over
+step      # Step into
+continue  # Continue execution
+up/down   # Move up/down stack
+whereami  # Show current location
+```
+
+### Better Errors
+```ruby
+# Gemfile
+group :development do
+  gem 'better_errors'
+  gem 'binding_of_caller'
+end
+
+# config/environments/development.rb
+BetterErrors.editor = :vscode  # Configure editor
+BetterErrors.maximum_variable_inspect_size = 100_000
+```
+
+### Byebug
+```ruby
+# Place in code
+byebug
+
+# Commands
+n        # Next line
+s        # Step into
+c        # Continue
+l        # List source
+p object # Print object
+```
+
+## Logging Configuration
+```ruby
+# config/environments/development.rb
+config.log_level = :debug
+config.logger = ActiveSupport::Logger.new(STDOUT)
+config.colorize_logging = true
+
+# Custom logging
+Rails.logger.debug("Debug message")
+Rails.logger.info("Info message")
+Rails.logger.warn("Warning message")
+Rails.logger.error("Error message")
+
+# Tagged logging
+Rails.logger.tagged("UsersController") do
+  Rails.logger.info("Processing user request")
+end
+
+# Custom log formatter
+class CustomFormatter < Logger::Formatter
+  def call(severity, timestamp, progname, msg)
+    "[#{timestamp}] #{severity}: #{msg}\n"
+  end
+end
+
+Rails.logger.formatter = CustomFormatter.new
+```
+
+## Performance Debugging
+
+### Rack Mini Profiler
+```ruby
+# Gemfile
+gem 'rack-mini-profiler'
+
+# config/initializers/mini_profiler.rb
+if Rails.env.development?
+  Rack::MiniProfiler.config.position = 'right'
+  Rack::MiniProfiler.config.start_hidden = false
+end
+```
+
+### Memory Profiling
+```ruby
+# Gemfile
+gem 'memory_profiler'
+
+# Usage
+require 'memory_profiler'
+
+report = MemoryProfiler.report do
+  # Code to profile
+end
+
+report.pretty_print
+```
+
+### SQL Query Debugging
+```ruby
+# Enable query logging
+ActiveRecord::Base.logger = Logger.new(STDOUT)
+
+# Log explain plans
+User.where(active: true).explain
+
+# Query timing
+ActiveSupport::Notifications.subscribe('sql.active_record') do |*args|
+  event = ActiveSupport::Notifications::Event.new(*args)
+  if event.duration > 100
+    Rails.logger.warn("Slow query: #{event.payload[:sql]}")
+  end
+end
+```
+
+## Application Monitoring
+
+### Exception Tracking
+```ruby
+# config/initializers/sentry.rb
+Sentry.init do |config|
+  config.dsn = ENV['SENTRY_DSN']
+  config.environment = Rails.env
+  config.traces_sample_rate = 0.1
+end
+
+# Custom context
+Sentry.set_user(id: current_user.id)
+Sentry.set_extras(params: params.to_unsafe_h)
+```
+
+### Request Debugging
+```ruby
+class ApplicationController < ActionController::Base
+  before_action :log_request_details
+  
+  private
+  
+  def log_request_details
+    Rails.logger.debug(<<~LOG)
+      Request Details:
+      URL: #{request.url}
+      Method: #{request.method}
+      Params: #{params.inspect}
+      Headers: #{request.headers.env.select { |k,v| k =~ /^HTTP_/ }}
+    LOG
+  end
+end
+```
+
+## Development Tools
+
+### Rails Panel
+```ruby
+# Gemfile
+group :development do
+  gem 'meta_request'
+end
+```
+
+### Time Travel Testing
+```ruby
+# Freeze time in tests
+travel_to Time.zone.local(2024, 1, 1) do
+  # Your test code here
+end
+
+# Travel forward
+travel 1.day
+travel 2.weeks
+```
+
+## Debugging Views
+
+### Debug Helper
+```erb
+<%= debug @user %>
+<%= simple_format @user.inspect %>
+
+<%# Log render times %>
+<% benchmark 'Rendering user profile' do %>
+  <%= render 'user_profile', user: @user %>
+<% end %>
+```
+
+### View Context
+```ruby
+# app/helpers/application_helper.rb
+module ApplicationHelper
+  def debug_view_context
+    content_tag :pre do
+      {
+        controller: controller.class.name,
+        action: action_name,
+        params: params.to_unsafe_h,
+        assigns: instance_variables.map { |v| [v, instance_variable_get(v)] }.to_h
+      }.pretty_inspect
+    end
+  end
+end
+```
+
+## Asset Debugging
+```ruby
+# config/environments/development.rb
+config.assets.debug = true
+config.assets.quiet = false
+
+# Debug asset paths
+Rails.application.config.assets.paths.each do |path|
+  puts path
+end
+```
+
+## Production Debugging
+
+### Live Console
+```ruby
+# Access production console (careful!)
+RAILS_ENV=production rails console
+
+# Safe inspection
+ActiveRecord::Base.connection.execute("SELECT COUNT(*) FROM users")
+```
+
+### Request Replay
+```ruby
+# Save problematic request
+class RequestLogger
+  def self.log_request(request)
+    File.write(
+      "log/requests/#{Time.current.to_i}.json",
+      {
+        method: request.method,
+        path: request.path,
+        params: request.params,
+        headers: request.headers.to_h
+      }.to_json
+    )
+  end
+end
+```
+
+## Testing Debug Tools
+```ruby
+# spec/rails_helper.rb
+RSpec.configure do |config|
+  config.before(:each) do
+    allow(Rails.logger).to receive(:debug)
+  end
+  
+  config.after(:each) do
+    # Verify logging expectations
+    expect(Rails.logger).to have_received(:debug)
+      .with(/Expected debug message/)
+  end
+end
+```
+
+## Best Practices
+
+1. Use structured logging
+2. Implement request ID tracking
+3. Set up proper error tracking
+4. Use environment-specific configurations
+5. Implement proper security measures
+6. Monitor memory usage
+7. Track performance metrics
+8. Use source maps in production
+9. Implement proper logging rotation
+10. Regular log analysis
+

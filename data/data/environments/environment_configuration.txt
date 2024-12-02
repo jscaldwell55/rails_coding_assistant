@@ -1,0 +1,264 @@
+# Rails Environment Configuration
+
+## Basic Configuration
+```ruby
+# config/application.rb
+module YourApp
+  class Application < Rails::Application
+    config.load_defaults 7.1
+    config.time_zone = 'UTC'
+    config.i18n.default_locale = :en
+    config.eager_load_paths << Rails.root.join('lib')
+    config.autoload_paths << Rails.root.join('app/services')
+  end
+end
+
+# config/environments/development.rb
+Rails.application.configure do
+  config.cache_classes = false
+  config.eager_load = false
+  config.consider_all_requests_local = true
+  config.server_timing = true
+  
+  # Active Storage
+  config.active_storage.service = :local
+  
+  # Action Mailer
+  config.action_mailer.raise_delivery_errors = true
+  config.action_mailer.perform_caching = false
+  config.action_mailer.default_url_options = { host: 'localhost', port: 3000 }
+  
+  # Active Support
+  config.active_support.deprecation = :log
+  config.active_support.disallowed_deprecation = :raise
+  
+  # Active Record
+  config.active_record.migration_error = :page_load
+  config.active_record.verbose_query_logs = true
+end
+
+# config/environments/production.rb
+Rails.application.configure do
+  config.cache_classes = true
+  config.eager_load = true
+  config.consider_all_requests_local = false
+  
+  # Security
+  config.force_ssl = true
+  config.ssl_options = { hsts: { subdomains: true } }
+  
+  # Caching
+  config.action_controller.perform_caching = true
+  config.cache_store = :redis_cache_store, { 
+    url: ENV['REDIS_URL'],
+    pool_size: ENV.fetch('RAILS_MAX_THREADS', 5)
+  }
+  
+  # Assets
+  config.public_file_server.enabled = true
+  config.assets.compile = false
+  config.assets.version = '1.0'
+  
+  # Logging
+  config.log_level = :info
+  config.log_tags = [:request_id]
+end
+```
+
+## Environment Variables
+```ruby
+# config/application.yml
+development:
+  DATABASE_URL: 'postgresql://localhost/myapp_development'
+  REDIS_URL: 'redis://localhost:6379/1'
+  AWS_ACCESS_KEY_ID: 'development_key'
+  AWS_SECRET_ACCESS_KEY: 'development_secret'
+
+production:
+  DATABASE_URL: <%= ENV['DATABASE_URL'] %>
+  REDIS_URL: <%= ENV['REDIS_URL'] %>
+  AWS_ACCESS_KEY_ID: <%= ENV['AWS_ACCESS_KEY_ID'] %>
+  AWS_SECRET_ACCESS_KEY: <%= ENV['AWS_SECRET_ACCESS_KEY'] %>
+
+# config/initializers/figaro.rb
+Figaro.require_keys(
+  'DATABASE_URL',
+  'REDIS_URL',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY'
+)
+```
+
+## Custom Configurations
+```ruby
+# config/initializers/custom_config.rb
+module YourApp
+  class Configuration
+    class << self
+      def load_yaml(filename)
+        YAML.load_file(
+          Rails.root.join('config', filename)
+        )[Rails.env]
+      end
+    end
+  end
+end
+
+# Usage
+APP_CONFIG = YourApp::Configuration.load_yaml('custom_config.yml')
+```
+
+## Service Configurations
+
+### Database
+```ruby
+# config/database.yml
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+
+development:
+  <<: *default
+  database: myapp_development
+  username: <%= ENV['DATABASE_USERNAME'] %>
+  password: <%= ENV['DATABASE_PASSWORD'] %>
+
+production:
+  <<: *default
+  url: <%= ENV['DATABASE_URL'] %>
+  pool: <%= ENV.fetch("DB_POOL") { 10 } %>
+```
+
+### Redis
+```ruby
+# config/initializers/redis.rb
+$redis = Redis.new(
+  url: ENV['REDIS_URL'],
+  ssl_params: { verify_mode: OpenSSL::SSL::VERIFY_NONE }
+)
+
+# Sidekiq configuration
+Sidekiq.configure_server do |config|
+  config.redis = { url: ENV['REDIS_URL'] }
+end
+
+Sidekiq.configure_client do |config|
+  config.redis = { url: ENV['REDIS_URL'] }
+end
+```
+
+### AWS
+```ruby
+# config/initializers/aws.rb
+Aws.config.update({
+  region: ENV['AWS_REGION'],
+  credentials: Aws::Credentials.new(
+    ENV['AWS_ACCESS_KEY_ID'],
+    ENV['AWS_SECRET_ACCESS_KEY']
+  )
+})
+
+# Active Storage
+Rails.application.configure do
+  config.active_storage.service = :amazon
+end
+```
+
+## Environment-Specific Features
+```ruby
+# Feature flags
+module Features
+  class << self
+    def enabled?(feature_name)
+      features[feature_name.to_s] == true
+    end
+
+    private
+
+    def features
+      @features ||= YAML.load_file(
+        Rails.root.join('config/features.yml')
+      )[Rails.env]
+    end
+  end
+end
+
+# Usage
+if Features.enabled?(:new_ui)
+  # Enable new UI
+end
+```
+
+## Logging Configuration
+```ruby
+# config/initializers/logging.rb
+if Rails.env.production?
+  Rails.logger = Logger.new(STDOUT)
+  Rails.logger.level = Logger::INFO
+  Rails.logger.formatter = proc do |severity, datetime, progname, msg|
+    {
+      timestamp: datetime.iso8601,
+      level: severity,
+      message: msg,
+      program: progname
+    }.to_json + "\n"
+  end
+end
+```
+
+## Error Tracking
+```ruby
+# config/initializers/sentry.rb
+if Rails.env.production?
+  Sentry.init do |config|
+    config.dsn = ENV['SENTRY_DSN']
+    config.environment = Rails.env
+    config.traces_sample_rate = 0.1
+    config.breadcrumbs_logger = [:active_support_logger]
+  end
+end
+```
+
+## Caching Strategies
+```ruby
+# config/environments/production.rb
+config.cache_store = :redis_cache_store, {
+  url: ENV['REDIS_URL'],
+  expires_in: 1.day,
+  race_condition_ttl: 10.seconds
+}
+
+# Fragment caching
+Rails.application.configure do
+  config.action_controller.perform_caching = true
+  config.cache_store = :memory_store, { size: 64.megabytes }
+end
+```
+
+## Asset Configuration
+```ruby
+# config/environments/production.rb
+config.assets.js_compressor = :terser
+config.assets.css_compressor = :sass
+config.assets.compile = false
+config.assets.digest = true
+config.assets.version = '1.0'
+config.public_file_server.headers = {
+  'Cache-Control' => "public, max-age=#{1.year.to_i}"
+}
+```
+
+## Security Headers
+```ruby
+# config/initializers/security_headers.rb
+Rails.application.config.action_dispatch.default_headers = {
+  'X-Frame-Options' => 'SAMEORIGIN',
+  'X-XSS-Protection' => '1; mode=block',
+  'X-Content-Type-Options' => 'nosniff',
+  'X-Download-Options' => 'noopen',
+  'X-Permitted-Cross-Domain-Policies' => 'none',
+  'Referrer-Policy' => 'strict-origin-when-cross-origin'
+}
+```
+

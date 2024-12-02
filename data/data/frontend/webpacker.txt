@@ -1,0 +1,248 @@
+# Webpacker in Rails Guide
+## Overview
+Comprehensive guide for configuring and using Webpacker in Ruby on Rails applications, including advanced configurations and optimization strategies.
+
+## Basic Setup
+### Installation and Configuration
+```ruby
+# Gemfile
+gem 'webpacker', '~> 6.0'
+```
+
+```bash
+# Terminal commands
+rails webpacker:install
+```
+
+### Directory Structure
+```
+app/
+  javascript/
+    packs/
+    channels/
+    controllers/
+    styles/
+config/
+  webpack/
+    development.js
+    production.js
+    test.js
+    environment.js
+```
+
+## Configuration Files
+### Base Configuration
+```javascript
+// config/webpack/environment.js
+const { environment } = require('@rails/webpacker')
+const webpack = require('webpack')
+
+// Add additional plugins
+environment.plugins.append('Provide', 
+  new webpack.ProvidePlugin({
+    $: 'jquery',
+    jQuery: 'jquery'
+  })
+)
+
+module.exports = environment
+```
+
+### Environment-Specific Config
+```javascript
+// config/webpack/production.js
+process.env.NODE_ENV = process.env.NODE_ENV || 'production'
+const environment = require('./environment')
+
+// Production-specific optimizations
+environment.config.merge({
+  optimization: {
+    splitChunks: {
+      chunks: 'all'
+    }
+  }
+})
+
+module.exports = environment.toWebpackConfig()
+```
+
+## Asset Management
+### JavaScript Entry Points
+```javascript
+// app/javascript/packs/application.js
+import Rails from "@rails/ujs"
+import Turbolinks from "turbolinks"
+import * as ActiveStorage from "@rails/activestorage"
+import "channels"
+
+Rails.start()
+Turbolinks.start()
+ActiveStorage.start()
+```
+
+### Stylesheet Integration
+```javascript
+// app/javascript/styles/application.scss
+@import "~bootstrap/scss/bootstrap";
+@import "./custom";
+
+// Custom styles
+.custom-class {
+  display: flex;
+  justify-content: center;
+}
+```
+
+## Advanced Features
+### Code Splitting
+```javascript
+// Dynamic imports
+const loadComponent = async () => {
+  const { default: Component } = await import('../components/LazyComponent')
+  return Component
+}
+```
+
+### Module Resolution
+```javascript
+// config/webpack/environment.js
+environment.config.merge({
+  resolve: {
+    alias: {
+      '@components': path.resolve(__dirname, '../../app/javascript/components'),
+      '@utils': path.resolve(__dirname, '../../app/javascript/utils')
+    }
+  }
+})
+```
+
+## Performance Optimization
+### Caching Configuration
+```javascript
+// config/webpack/production.js
+environment.config.merge({
+  output: {
+    filename: '[name]-[chunkhash].js',
+    chunkFilename: '[name]-[chunkhash].chunk.js'
+  },
+  cache: {
+    type: 'filesystem',
+    buildDependencies: {
+      config: [__filename]
+    }
+  }
+})
+```
+
+### Bundle Analysis
+```javascript
+// config/webpack/development.js
+const BundleAnalyzerPlugin = require('webpack-bundle-analyzer').BundleAnalyzerPlugin
+
+environment.plugins.append('BundleAnalyzer',
+  new BundleAnalyzerPlugin({
+    analyzerMode: 'static',
+    openAnalyzer: false,
+    reportFilename: 'bundle-report.html'
+  })
+)
+```
+
+## Asset Compilation
+### Production Build
+```bash
+# Compile assets
+RAILS_ENV=production bundle exec rails assets:precompile
+
+# Clean old assets
+RAILS_ENV=production bundle exec rails assets:clean
+```
+
+### Development Watch Mode
+```bash
+# Start webpack-dev-server
+./bin/webpack-dev-server
+
+# Configuration
+# config/webpacker.yml
+development:
+  dev_server:
+    host: localhost
+    port: 3035
+    hmr: true
+```
+
+## Integration with Rails
+### View Helpers
+```erb
+<%# app/views/layouts/application.html.erb %>
+<%= javascript_pack_tag 'application' %>
+<%= stylesheet_pack_tag 'application' %>
+```
+
+### Dynamic Imports in Views
+```erb
+<%# app/views/pages/home.html.erb %>
+<%= javascript_packs_with_chunks_tag 'home' %>
+```
+
+## Testing Setup
+### Jest Configuration
+```javascript
+// jest.config.js
+module.exports = {
+  roots: ['spec/javascript'],
+  moduleDirectories: ['node_modules', 'app/javascript'],
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/app/javascript/$1'
+  }
+}
+```
+
+## Error Handling
+### Development Error Display
+```javascript
+// config/webpack/development.js
+environment.config.merge({
+  devServer: {
+    overlay: true,
+    stats: 'errors-only'
+  }
+})
+```
+
+## Security Considerations
+### Content Security Policy
+```ruby
+# config/initializers/content_security_policy.rb
+Rails.application.config.content_security_policy do |policy|
+  policy.connect_src :self, :https, 'http://localhost:3035', 'ws://localhost:3035'
+end
+```
+
+## Deployment Strategies
+### Asset Precompilation
+```ruby
+# config/environments/production.rb
+config.assets.compile = false
+config.assets.digest = true
+config.assets.version = '1.0'
+```
+
+### CDN Configuration
+```ruby
+# config/environments/production.rb
+config.action_controller.asset_host = 'cdn.example.com'
+```
+
+## Troubleshooting
+### Common Issues
+- Node modules resolution problems
+- Compilation errors
+- Development server connection issues
+- Asset fingerprinting conflicts
+
+### Debug Mode
+```bash
+WEBPACKER_DEBUG=true bin/webpack
+```

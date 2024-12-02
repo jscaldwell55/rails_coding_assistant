@@ -1,0 +1,354 @@
+# Rails API Mode Guide
+## Overview
+Comprehensive guide for building APIs with Rails API mode, covering setup, authentication, versioning, response handling, and security best practices.
+
+## Initial Setup
+### API-Only Application
+```ruby
+# Create new API application
+rails new my_api --api
+
+# config/application.rb
+module MyApi
+  class Application < Rails::Application
+    config.api_only = true
+    
+    # CORS configuration
+    config.middleware.insert_before 0, Rack::Cors do
+      allow do
+        origins 'example.com'
+        resource '*',
+          headers: :any,
+          methods: [:get, :post, :put, :patch, :delete, :options, :head],
+          credentials: true
+      end
+    end
+  end
+end
+```
+
+## API Versioning
+### Route Configuration
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  namespace :api do
+    namespace :v1 do
+      resources :users
+      resources :posts
+    end
+    
+    namespace :v2 do
+      resources :users
+      resources :posts
+    end
+  end
+end
+
+# app/controllers/api/v1/base_controller.rb
+module Api
+  module V1
+    class BaseController < ApplicationController
+      include ApiAuthentication
+      include ErrorHandling
+      
+      before_action :authenticate_request
+      
+      private
+      
+      def current_user
+        @current_user ||= User.find_by(auth_token: request.headers['Authorization'])
+      end
+    end
+  end
+end
+```
+
+## Request/Response Handling
+### JSON Response Structure
+```ruby
+# app/controllers/api/v1/users_controller.rb
+module Api
+  module V1
+    class UsersController < BaseController
+      def index
+        users = User.paginate(page: params[:page], per_page: 20)
+        
+        render json: {
+          data: ActiveModelSerializers::SerializableResource.new(users),
+          meta: {
+            current_page: users.current_page,
+            total_pages: users.total_pages,
+            total_count: users.total_entries
+          }
+        }
+      end
+      
+      def show
+        user = User.find(params[:id])
+        render json: {
+          data: UserSerializer.new(user),
+          meta: {
+            last_login: user.last_login_at
+          }
+        }
+      end
+    end
+  end
+end
+```
+
+## Serialization
+### JSON Serializer
+```ruby
+# app/serializers/user_serializer.rb
+class UserSerializer < ActiveModel::Serializer
+  attributes :id, :email, :username, :created_at
+  
+  has_many :posts
+  has_one :profile
+  
+  attribute :full_name do
+    "#{object.first_name} #{object.last_name}"
+  end
+  
+  def created_at
+    object.created_at.iso8601
+  end
+end
+
+# Custom collection serializer
+class PaginatedSerializer < ActiveModel::Serializer::CollectionSerializer
+  def initialize(objects, options = {})
+    super
+    @pagination = options.delete(:pagination) || {}
+  end
+  
+  def as_json
+    {
+      data: super,
+      meta: @pagination
+    }
+  end
+end
+```
+
+## Authentication
+### JWT Implementation
+```ruby
+# app/controllers/concerns/api_authentication.rb
+module ApiAuthentication
+  extend ActiveSupport::Concern
+  
+  included do
+    before_action :authenticate_request
+    attr_reader :current_user
+  end
+  
+  private
+  
+  def authenticate_request
+    @current_user = AuthorizeApiRequest.call(request.headers).result
+    render json: { error: 'Unauthorized' }, status: 401 unless @current_user
+  end
+end
+
+# app/services/authorize_api_request.rb
+class AuthorizeApiRequest
+  def self.call(headers = {})
+    new(headers).call
+  end
+  
+  def initialize(headers = {})
+    @headers = headers
+  end
+  
+  def call
+    {
+      result: user
+    }
+  end
+  
+  private
+  
+  attr_reader :headers
+  
+  def user
+    @user ||= User.find(decoded_auth_token[:user_id]) if decoded_auth_token
+  rescue ActiveRecord::RecordNotFound
+    nil
+  end
+  
+  def decoded_auth_token
+    @decoded_auth_token ||= JsonWebToken.decode(http_auth_header)
+  end
+  
+  def http_auth_header
+    headers['Authorization'].split(' ').last if headers['Authorization'].present?
+  end
+end
+```
+
+## Error Handling
+### Custom Error Responses
+```ruby
+# app/controllers/concerns/error_handling.rb
+module ErrorHandling
+  extend ActiveSupport::Concern
+  
+  included do
+    rescue_from ActiveRecord::RecordNotFound, with: :not_found
+    rescue_from ActiveRecord::RecordInvalid, with: :unprocessable_entity
+    rescue_from ActionController::ParameterMissing, with: :bad_request
+  end
+  
+  private
+  
+  def not_found(exception)
+    render_error(:not_found, exception.message)
+  end
+  
+  def unprocessable_entity(exception)
+    render_error(:unprocessable_entity, exception.record.errors)
+  end
+  
+  def bad_request(exception)
+    render_error(:bad_request, exception.message)
+  end
+  
+  def render_error(status, message)
+    render json: {
+      error: {
+        status: status,
+        message: message,
+        timestamp: Time.current
+      }
+    }, status: status
+  end
+end
+```
+
+## Rate Limiting
+### Request Throttling
+```ruby
+# config/initializers/rack_attack.rb
+class Rack::Attack
+  Rack::Attack.cache.store = ActiveSupport::Cache::RedisStore.new(ENV['REDIS_URL'])
+  
+  # Throttle all requests by IP
+  throttle('req/ip', limit: 300, period: 5.minutes) do |req|
+    req.ip unless req.path.start_with?('/assets')
+  end
+  
+  # Throttle POST requests to /api/v1/auth
+  throttle('auth/ip', limit: 5, period: 20.seconds) do |req|
+    if req.path.match?(%r{^/api/v1/auth}) && req.post?
+      req.ip
+    end
+  end
+  
+  # Custom throttle response
+  self.throttled_response = lambda do |env|
+    [
+      429,
+      {'Content-Type' => 'application/json'},
+      [{
+        error: {
+          status: 429,
+          message: "Too many requests. Please try again later.",
+          retry_after: env['rack.attack.match_data'][:period]
+        }
+      }.to_json]
+    ]
+  end
+end
+```
+
+## Documentation
+### API Documentation
+```ruby
+# Gemfile
+gem 'rswag'
+
+# spec/integration/users_spec.rb
+describe 'Users API' do
+  path '/api/v1/users' do
+    get 'Retrieves all users' do
+      tags 'Users'
+      produces 'application/json'
+      parameter name: :page, in: :query, type: :integer
+      
+      response '200', 'users found' do
+        schema type: :object,
+          properties: {
+            data: {
+              type: :array,
+              items: {
+                type: :object,
+                properties: {
+                  id: { type: :integer },
+                  email: { type: :string },
+                  username: { type: :string }
+                }
+              }
+            }
+          }
+        run_test!
+      end
+    end
+  end
+end
+```
+
+## Testing
+### Request Specs
+```ruby
+# spec/requests/api/v1/users_spec.rb
+RSpec.describe 'Users API', type: :request do
+  describe 'GET /api/v1/users' do
+    before do
+      create_list(:user, 10)
+      get '/api/v1/users', headers: valid_headers
+    end
+    
+    it 'returns users' do
+      expect(json['data']).not_to be_empty
+      expect(json['data'].size).to eq(10)
+    end
+    
+    it 'returns status code 200' do
+      expect(response).to have_http_status(200)
+    end
+  end
+  
+  describe 'POST /api/v1/users' do
+    let(:valid_attributes) { { user: attributes_for(:user) } }
+    
+    context 'when request is valid' do
+      before do
+        post '/api/v1/users',
+          params: valid_attributes,
+          headers: valid_headers
+      end
+      
+      it 'creates a new user' do
+        expect(json['data']['email']).to eq(valid_attributes[:user][:email])
+      end
+    end
+  end
+end
+```
+
+## Security
+### Security Headers
+```ruby
+# config/initializers/security_headers.rb
+Rails.application.config.action_dispatch.default_headers = {
+  'X-Frame-Options' => 'SAMEORIGIN',
+  'X-XSS-Protection' => '1; mode=block',
+  'X-Content-Type-Options' => 'nosniff',
+  'X-Download-Options' => 'noopen',
+  'X-Permitted-Cross-Domain-Policies' => 'none',
+  'Referrer-Policy' => 'strict-origin-when-cross-origin'
+}
+```

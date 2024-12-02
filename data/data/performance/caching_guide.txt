@@ -1,0 +1,284 @@
+# Rails Caching Guide
+## Overview
+Comprehensive guide for implementing and optimizing caching in Rails applications, covering page, fragment, Russian doll caching, and low-level caching strategies.
+
+## Cache Store Configuration
+### Basic Setup
+```ruby
+# config/environments/production.rb
+config.cache_store = :redis_cache_store, {
+  url: ENV['REDIS_URL'],
+  password: ENV['REDIS_PASSWORD'],
+  connect_timeout: 30,
+  read_timeout: 0.2,
+  write_timeout: 0.2,
+  reconnect_attempts: 1,
+  pool_size: 5,
+  pool_timeout: 5
+}
+
+# Alternative Memcached setup
+config.cache_store = :mem_cache_store,
+  "cache-1.example.com", "cache-2.example.com",
+  { namespace: 'myapp', compress: true, pool_size: 5 }
+```
+
+## Page Caching
+### Configuration
+```ruby
+# Gemfile
+gem 'actionpack-page_caching'
+
+# app/controllers/pages_controller.rb
+class PagesController < ApplicationController
+  caches_page :show, :index
+  
+  def show
+    @page = Page.find(params[:id])
+  end
+  
+  def update
+    @page = Page.find(params[:id])
+    if @page.update(page_params)
+      expire_page action: 'show', id: @page
+      redirect_to @page
+    end
+  end
+end
+```
+
+## Fragment Caching
+### Basic Implementation
+```erb
+<%# app/views/products/index.html.erb %>
+<% cache_if user_signed_in?, ["v1", @products] do %>
+  <% @products.each do |product| %>
+    <% cache ["v1", product] do %>
+      <%= render product %>
+    <% end %>
+  <% end %>
+<% end %>
+```
+
+### Russian Doll Caching
+```ruby
+# app/models/product.rb
+class Product < ApplicationRecord
+  belongs_to :category, touch: true
+  has_many :reviews, dependent: :destroy
+  
+  def cache_key_with_version
+    "#{super}-#{reviews.maximum(:updated_at)&.to_i}"
+  end
+end
+
+# app/views/products/_product.html.erb
+<% cache product do %>
+  <div class="product">
+    <h2><%= product.name %></h2>
+    <% cache [product, "reviews"] do %>
+      <%= render partial: "reviews/review",
+                 collection: product.reviews %>
+    <% end %>
+  </div>
+<% end %>
+```
+
+## Low-Level Caching
+### Rails.cache Interface
+```ruby
+class ProductsController < ApplicationController
+  def show
+    @product = Product.find(params[:id])
+    @related_products = Rails.cache.fetch(
+      ["related_products", @product], expires_in: 12.hours
+    ) do
+      @product.find_related_products
+    end
+  end
+  
+  def trending
+    @trending_products = Rails.cache.fetch(
+      "trending_products", expires_in: 1.hour,
+      race_condition_ttl: 10.seconds
+    ) do
+      Product.trending.limit(10).to_a
+    end
+  end
+end
+```
+
+## SQL Query Caching
+### Query Cache Configuration
+```ruby
+# config/environments/production.rb
+config.active_record.query_cache_size = 100
+
+# Custom query caching
+class Product < ApplicationRecord
+  def self.cached_categories
+    Rails.cache.fetch("product_categories", expires_in: 1.hour) do
+      includes(:category).group(:category_id).count
+    end
+  end
+end
+```
+
+## HTTP Caching
+### Controller Implementation
+```ruby
+class ProductsController < ApplicationController
+  def show
+    @product = Product.find(params[:id])
+    fresh_when(
+      etag: [@product, current_user],
+      last_modified: @product.updated_at,
+      public: true
+    )
+  end
+  
+  def index
+    @products = Product.all
+    if stale?(
+      etag: @products,
+      last_modified: @products.maximum(:updated_at)
+    )
+      render
+    end
+  end
+end
+```
+
+## Cache Sweepers
+### Implementation
+```ruby
+# app/sweepers/product_sweeper.rb
+class ProductSweeper < ActionController::Caching::Sweeper
+  observe Product
+  
+  def after_update(product)
+    expire_product_cache(product)
+  end
+  
+  def after_destroy(product)
+    expire_product_cache(product)
+  end
+  
+  private
+  
+  def expire_product_cache(product)
+    expire_page product_path(product)
+    expire_fragment "product_#{product.id}"
+  end
+end
+```
+
+## Conditional GET Support
+### Controller Configuration
+```ruby
+class ProductsController < ApplicationController
+  etag { current_user.try(:id) }
+  etag { flash }
+  etag { cookies.encrypted[:market_region] }
+  
+  def show
+    @product = Product.find(params[:id])
+    if stale?(@product)
+      respond_to do |format|
+        format.html
+        format.json { render json: @product }
+      end
+    end
+  end
+end
+```
+
+## Cache Key Generation
+### Custom Cache Keys
+```ruby
+class Product < ApplicationRecord
+  def cache_key
+    "#{super}-#{featured? ? 'featured' : 'standard'}"
+  end
+  
+  def self.cache_key
+    "products/all-#{maximum(:updated_at)}-#{count}"
+  end
+end
+```
+
+## Performance Monitoring
+### Cache Statistics
+```ruby
+# config/initializers/cache_monitoring.rb
+module CacheMonitoring
+  def fetch(*args, &block)
+    start_time = Time.current
+    result = super
+    duration = Time.current - start_time
+    
+    StatsD.timing("cache.fetch", duration * 1000)
+    StatsD.increment("cache.#{result.nil? ? 'miss' : 'hit'}")
+    
+    result
+  end
+end
+
+Rails.cache.extend(CacheMonitoring)
+```
+
+## Advanced Techniques
+### Composite Caching
+```ruby
+class CompositeCache
+  def self.fetch(keys, options = {})
+    composite_key = keys.map { |k| "#{k}/#{Rails.cache.read(k)}" }.join('/')
+    
+    Rails.cache.fetch(composite_key, options) do
+      yield
+    end
+  end
+end
+
+# Usage
+CompositeCache.fetch(
+  ["user_#{user.id}", "products_#{product.id}"],
+  expires_in: 1.hour
+) do
+  # Expensive computation
+end
+```
+
+## Testing
+### Cache Testing
+```ruby
+# spec/requests/products_controller_spec.rb
+RSpec.describe ProductsController, type: :request do
+  describe "GET /products" do
+    it "caches the response" do
+      get products_path
+      etag = response.headers['ETag']
+      
+      get products_path, headers: { 'If-None-Match' => etag }
+      expect(response).to have_http_status(:not_modified)
+    end
+  end
+end
+```
+
+## Maintenance
+### Cache Warming
+```ruby
+namespace :cache do
+  desc "Warm up application cache"
+  task warm: :environment do
+    Product.find_each do |product|
+      Rails.cache.write(
+        ["product", product.id],
+        product.as_json,
+        expires_in: 12.hours
+      )
+    end
+  end
+end
+```

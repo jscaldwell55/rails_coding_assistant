@@ -1,0 +1,236 @@
+# Active Record Callbacks
+
+## Callback Overview
+Active Record callbacks are hooks into the object lifecycle, allowing code execution before, after, or around key events.
+
+### Lifecycle Callbacks Order
+```ruby
+# Creating an object triggers:
+1. before_validation
+2. after_validation
+3. before_save
+4. around_save
+5. before_create
+6. around_create
+7. after_create
+8. after_save
+9. after_commit/after_rollback
+
+# Updating an object triggers:
+1. before_validation
+2. after_validation
+3. before_save
+4. around_save
+5. before_update
+6. around_update
+7. after_update
+8. after_save
+9. after_commit/after_rollback
+
+# Destroying an object triggers:
+1. before_destroy
+2. around_destroy
+3. after_destroy
+4. after_commit/after_rollback
+```
+
+### Implementation Examples
+```ruby
+class User < ApplicationRecord
+  # Validation callbacks
+  before_validation :normalize_email
+  after_validation :log_validation_errors
+
+  # Save callbacks
+  before_save :encrypt_sensitive_data
+  after_save :clear_cache
+  around_save :with_logging
+
+  # Create callbacks
+  before_create :generate_uuid
+  after_create :send_welcome_email
+
+  # Update callbacks
+  before_update :check_state_transition
+  after_update :notify_changes
+
+  # Destroy callbacks
+  before_destroy :ensure_deletable
+  after_destroy :cleanup_associated_records
+
+  # Transaction callbacks
+  after_commit :async_processing, on: [:create, :update]
+  after_rollback :handle_failure
+
+  private
+
+  def normalize_email
+    self.email = email.downcase.strip if email.present?
+  end
+
+  def log_validation_errors
+    if errors.any?
+      Rails.logger.warn("Validation failed: #{errors.full_messages.join(', ')}")
+    end
+  end
+
+  def encrypt_sensitive_data
+    self.ssn = Encryptor.encrypt(ssn) if ssn_changed?
+  end
+
+  def with_logging
+    Rails.logger.info "Starting save for user #{id}"
+    yield
+    Rails.logger.info "Completed save for user #{id}"
+  end
+
+  def generate_uuid
+    self.uuid = SecureRandom.uuid
+  end
+
+  def send_welcome_email
+    UserMailer.welcome(self).deliver_later
+  end
+
+  def check_state_transition
+    if status_changed? && invalid_transition?
+      throw :abort
+    end
+  end
+
+  def notify_changes
+    NotificationService.user_updated(self)
+  end
+
+  def ensure_deletable
+    if has_active_subscriptions?
+      errors.add(:base, "Cannot delete user with active subscriptions")
+      throw :abort
+    end
+  end
+
+  def cleanup_associated_records
+    ActivityLog.where(user_id: id).destroy_all
+  end
+
+  def async_processing
+    ProcessingWorker.perform_async(id)
+  end
+
+  def handle_failure
+    ErrorTracker.report("Transaction rolled back for user #{id}")
+  end
+end
+```
+
+### Conditional Callbacks
+```ruby
+class Order < ApplicationRecord
+  before_save :update_total, if: :line_items_changed?
+  before_destroy :notify_customer, if: :proc { |order| order.value > 1000 }
+  after_create :send_confirmation, unless: :draft?
+  
+  def line_items_changed?
+    line_items.any? { |item| item.changed? }
+  end
+end
+```
+
+### Callback Classes
+```ruby
+class UserCallbacks
+  def before_save(user)
+    user.username = user.email.split('@').first unless user.username.present?
+  end
+end
+
+class User < ApplicationRecord
+  before_save UserCallbacks.new
+end
+```
+
+### Transaction Callbacks
+```ruby
+class Payment < ApplicationRecord
+  after_commit :process_payment, on: :create
+  after_commit :notify_state_change, on: :update
+  after_rollback :handle_failure
+
+  private
+
+  def process_payment
+    PaymentProcessor.process_async(id)
+  end
+
+  def notify_state_change
+    if saved_change_to_state?
+      NotificationService.payment_state_changed(self)
+    end
+  end
+
+  def handle_failure
+    ErrorTracker.capture_exception(
+      StandardError.new("Payment transaction failed"),
+      payment_id: id,
+      amount: amount,
+      state: state
+    )
+  end
+end
+```
+
+### Best Practices
+1. Keep callbacks focused and single-purpose
+2. Use `throw :abort` to halt the callback chain
+3. Consider using Active Job for time-consuming operations
+4. Be mindful of callback order
+5. Use transactional callbacks when necessary
+6. Avoid complex logic in callbacks
+7. Consider using service objects for complex operations
+8. Test callbacks thoroughly
+9. Document callback side effects
+10. Use conditional callbacks appropriately
+
+### Common Pitfalls
+1. Circular dependencies in callbacks
+2. Callbacks that modify other records
+3. Long-running operations in callbacks
+4. Too many callbacks on a single model
+5. Non-deterministic callback behavior
+6. Callbacks that fail silently
+
+### Performance Considerations
+```ruby
+class Document < ApplicationRecord
+  # Bad - may cause N+1 queries
+  after_save :update_associated_records
+
+  # Better - use bulk operations
+  after_save :bulk_update_associated_records
+
+  private
+
+  def bulk_update_associated_records
+    AssociatedRecord.where(document_id: id)
+                   .update_all(updated_at: Time.current)
+  end
+end
+```
+
+### Testing Callbacks
+```ruby
+RSpec.describe User, type: :model do
+  describe 'callbacks' do
+    it 'normalizes email before validation' do
+      user = User.new(email: ' USER@EXAMPLE.COM ')
+      user.valid?
+      expect(user.email).to eq('user@example.com')
+    end
+
+    it 'sends welcome email after create' do
+      expect(UserMailer).to receive(:welcome)
+      user = create(:user)
+    end
+  end
+end
+```

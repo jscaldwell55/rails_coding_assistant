@@ -1,0 +1,300 @@
+# Rails Performance Best Practices Guide
+## Overview
+Comprehensive guide for optimizing Rails application performance, covering database optimization, memory management, request handling, and monitoring strategies.
+
+## Database Optimization
+### Query Optimization
+```ruby
+# Poor Performance
+users = User.all
+active_users = users.select { |user| user.active? }
+
+# Optimized
+active_users = User.where(active: true)
+
+# N+1 Query Problem
+class PostsController < ApplicationController
+  # Bad - N+1 queries
+  def index
+    @posts = Post.all
+    @posts.each do |post|
+      puts post.user.name
+    end
+  end
+  
+  # Good - Single query with includes
+  def index
+    @posts = Post.includes(:user, :comments, :categories)
+  end
+end
+```
+
+### Index Strategy
+```ruby
+class AddStrategicIndexes < ActiveRecord::Migration[7.0]
+  def change
+    # Composite indexes for frequently combined queries
+    add_index :orders, [:user_id, :created_at]
+    
+    # Partial indexes for filtered queries
+    add_index :users, :email, 
+      where: "deleted_at IS NULL",
+      unique: true
+    
+    # Expression indexes for computed values
+    add_index :users, "LOWER(email)"
+  end
+end
+```
+
+## Memory Management
+### Garbage Collection
+```ruby
+# config/initializers/gc_tuning.rb
+GC.configure(
+  malloc_limit: 64_000_000,
+  malloc_limit_max: 128_000_000,
+  malloc_limit_growth_factor: 1.4,
+  oldmalloc_limit: 16_000_000,
+  oldmalloc_limit_max: 128_000_000
+)
+
+# Manual GC triggering for memory-intensive operations
+class LargeReportGenerator
+  def generate
+    report_data = process_large_dataset
+    GC.start(full_mark: true, immediate_sweep: true)
+    generate_pdf(report_data)
+  end
+end
+```
+
+## Request Handling
+### Rack Middleware Optimization
+```ruby
+# config/application.rb
+module YourApp
+  class Application < Rails::Application
+    # Remove unnecessary middleware
+    config.middleware.delete Rack::Runtime
+    
+    # Add custom middleware for performance
+    config.middleware.insert_before 0, Rack::Deflater
+    
+    # Custom middleware for request profiling
+    config.middleware.use RequestProfiler
+  end
+end
+
+# Custom middleware
+class RequestProfiler
+  def initialize(app)
+    @app = app
+  end
+  
+  def call(env)
+    start = Time.current
+    status, headers, response = @app.call(env)
+    duration = Time.current - start
+    
+    StatsD.timing("request.duration", duration * 1000)
+    [status, headers, response]
+  end
+end
+```
+
+## Asset Pipeline
+### Asset Compilation
+```ruby
+# config/environments/production.rb
+config.assets.js_compressor = :terser
+config.assets.css_compressor = :sass
+config.assets.compile = false
+config.assets.digest = true
+config.assets.version = '1.0'
+
+# config/initializers/assets.rb
+Rails.application.config.assets.precompile += %w(
+  admin.js
+  admin.css
+  *.png
+  *.jpg
+  *.svg
+)
+```
+
+## Caching Strategies
+### Multi-Level Caching
+```ruby
+class ProductsController < ApplicationController
+  def show
+    @product = Rails.cache.fetch(
+      ["v1", "product", params[:id]], 
+      expires_in: 12.hours
+    ) do
+      Product.find(params[:id])
+    end
+    
+    @related_products = Rails.cache.fetch(
+      ["v1", "related_products", @product.id],
+      expires_in: 6.hours
+    ) do
+      @product.related_products.limit(5)
+    end
+  end
+end
+```
+
+## Background Jobs
+### Job Queue Optimization
+```ruby
+class ProcessVideoJob < ApplicationJob
+  queue_as :videos
+  
+  def perform(video_id)
+    ActiveRecord::Base.connection_pool.with_connection do
+      video = Video.find(video_id)
+      process_video(video)
+    end
+  end
+  
+  private
+  
+  def process_video(video)
+    # Resource-intensive processing
+    ensure_memory_available do
+      video.transcode
+    end
+  end
+  
+  def ensure_memory_available
+    GC.start
+    yield
+  ensure
+    GC.start
+  end
+end
+```
+
+## Monitoring and Profiling
+### Performance Monitoring
+```ruby
+# config/initializers/performance_monitoring.rb
+ActiveSupport::Notifications.subscribe "process_action.action_controller" do |*args|
+  event = ActiveSupport::Notifications::Event.new(*args)
+  
+  StatsD.timing("controller.action.time", event.duration)
+  StatsD.timing("db.time", event.payload[:db_runtime])
+  StatsD.timing("view.time", event.payload[:view_runtime])
+end
+```
+
+### Custom Instrumentation
+```ruby
+module CustomInstrumentation
+  extend ActiveSupport::Concern
+  
+  included do
+    around_action :measure_controller_action
+  end
+  
+  private
+  
+  def measure_controller_action
+    ActiveSupport::Notifications.instrument(
+      "controller_action.custom",
+      controller: self.class.name,
+      action: action_name
+    ) do
+      yield
+    end
+  end
+end
+```
+
+## Code Optimization
+### Lazy Loading
+```ruby
+class User < ApplicationRecord
+  has_one :profile
+  
+  def avatar_url
+    @avatar_url ||= begin
+      profile.avatar_url if profile.present?
+    end
+  end
+  
+  def expensive_calculation
+    Rails.cache.fetch("user_#{id}_calculation") do
+      # Complex calculation
+      calculate_something_expensive
+    end
+  end
+end
+```
+
+## Load Testing
+### Performance Benchmarking
+```ruby
+# test/performance/browsing_test.rb
+require 'test_helper'
+require 'rails/performance_test_help'
+
+class BrowsingTest < ActionDispatch::PerformanceTest
+  def test_homepage
+    get '/'
+  end
+  
+  def test_product_listing
+    get '/products'
+  end
+end
+```
+
+## Security Performance
+### Rate Limiting
+```ruby
+# config/initializers/rack_attack.rb
+class Rack::Attack
+  throttle('req/ip', limit: 300, period: 5.minutes) do |req|
+    req.ip unless req.path.start_with?('/assets')
+  end
+  
+  throttle('logins/ip', limit: 5, period: 20.seconds) do |req|
+    if req.path == '/login' && req.post?
+      req.ip
+    end
+  end
+end
+```
+
+## Production Tuning
+### Puma Configuration
+```ruby
+# config/puma.rb
+workers Integer(ENV['PUMA_WORKERS'] || 3)
+threads_count = Integer(ENV['PUMA_THREADS'] || 5)
+threads threads_count, threads_count
+
+preload_app!
+
+on_worker_boot do
+  ActiveSupport.on_load(:active_record) do
+    ActiveRecord::Base.establish_connection
+  end
+end
+```
+
+## Development Tools
+### Bullet Configuration
+```ruby
+# config/environments/development.rb
+config.after_initialize do
+  Bullet.enable = true
+  Bullet.alert = true
+  Bullet.bullet_logger = true
+  Bullet.console = true
+  Bullet.rails_logger = true
+  Bullet.add_footer = true
+end
+```

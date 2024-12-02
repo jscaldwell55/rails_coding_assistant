@@ -1,0 +1,273 @@
+# Bullet Configuration and Usage Guide
+
+## Basic Setup
+```ruby
+# Gemfile
+group :development do
+  gem 'bullet'
+end
+
+# config/environments/development.rb
+Rails.application.configure do
+  config.after_initialize do
+    Bullet.enable = true
+    Bullet.alert = true
+    Bullet.bullet_logger = true
+    Bullet.console = true
+    Bullet.rails_logger = true
+    Bullet.add_footer = true
+  end
+end
+
+# config/environments/test.rb
+config.after_initialize do
+  Bullet.enable = true
+  Bullet.bullet_logger = true
+  Bullet.raise = true  # raise an error if n+1 query occurs
+end
+```
+
+## Advanced Configuration
+```ruby
+Bullet.setup do |config|
+  # Enable Bullet
+  config.enable = true
+  
+  # Enable logging to Rails logs
+  config.rails_logger = true
+  
+  # Log to separate Bullet log file
+  config.bullet_logger = true
+  
+  # Alert via browser JavaScript alert
+  config.alert = true
+  
+  # Log to browser's console.log
+  config.console = true
+  
+  # Add footer showing SQL queries
+  config.add_footer = true
+  
+  # Raise errors in test environment
+  config.raise = Rails.env.test?
+  
+  # Set specific paths to ignore
+  config.skip_html_injection = [%r{^/admin/}]
+  
+  # Detect N+1 queries
+  config.n_plus_one_query_enable = true
+  
+  # Detect unused eager loading
+  config.unused_eager_loading_enable = true
+  
+  # Detect counter cache
+  config.counter_cache_enable = true
+  
+  # Whitelist specific associations
+  config.counter_cache_list = {
+    'User' => [:posts_count],
+    'Post' => [:comments_count]
+  }
+  
+  # Custom detectors
+  config.add_whitelist(
+    type: :n_plus_one_query,
+    class_name: 'User',
+    association: :posts
+  )
+end
+```
+
+## Common N+1 Patterns and Solutions
+
+### Basic N+1 Query
+```ruby
+# Bad - N+1 Query
+class PostsController < ApplicationController
+  def index
+    @posts = Post.all
+    # In view: posts.each { |post| post.user.name }
+  end
+  
+# Good - Eager Loading
+  def index
+    @posts = Post.includes(:user)
+  end
+end
+```
+
+### Nested Associations
+```ruby
+# Bad - Nested N+1
+class PostsController < ApplicationController
+  def index
+    @posts = Post.all
+    # In view: posts.each { |post| post.comments.each { |comment| comment.user.name } }
+  end
+  
+# Good - Nested Eager Loading
+  def index
+    @posts = Post.includes(comments: :user)
+  end
+end
+```
+
+### Conditional Loading
+```ruby
+# Bad - Conditional N+1
+class PostsController < ApplicationController
+  def index
+    @posts = Post.all
+    # In view: posts.each { |post| post.user.name if post.published? }
+  end
+  
+# Good - Selective Loading
+  def index
+    @posts = Post.where(published: true).includes(:user)
+  end
+end
+```
+
+## Testing with Bullet
+```ruby
+# spec/rails_helper.rb
+RSpec.configure do |config|
+  if Bullet.enable?
+    config.before(:each) do
+      Bullet.start_request
+    end
+
+    config.after(:each) do
+      Bullet.perform_out_of_channel_notifications if Bullet.notification?
+      Bullet.end_request
+    end
+  end
+end
+
+# In your specs
+describe PostsController, type: :controller do
+  it 'does not have N+1 queries' do
+    expect(Bullet.unused_eager_loading_associations).to be_empty
+    expect(Bullet.n_plus_one_query_associations).to be_empty
+  end
+end
+```
+
+## Performance Monitoring
+```ruby
+# Custom Bullet Logger
+class CustomBulletLogger
+  def self.debug(message)
+    Rails.logger.debug "[BULLET] #{message}"
+    StatsD.increment('bullet.n_plus_one_detected')
+  end
+end
+
+Bullet.debug = true
+Bullet.debug_file = Rails.root.join('log/bullet.log')
+```
+
+## Best Practices
+
+### Model Level
+```ruby
+class Post < ApplicationRecord
+  # Define default includes for common queries
+  scope :with_basics, -> { includes(:user, :category) }
+  
+  # Use counter cache for counts
+  belongs_to :user, counter_cache: true
+  
+  # Specify touch option when needed
+  belongs_to :user, touch: true
+end
+```
+
+### Controller Level
+```ruby
+class PostsController < ApplicationController
+  def index
+    @posts = Post.includes(:user, comments: [:user, :likes])
+                 .where(published: true)
+                 .order(created_at: :desc)
+  end
+  
+  def show
+    @post = Post.includes(comments: [:user, replies: :user])
+                .find(params[:id])
+  end
+end
+```
+
+### View Level
+```ruby
+# Good - Use preloaded associations
+<% @posts.each do |post| %>
+  <%= post.user.name %>
+  <% post.comments.each do |comment| %>
+    <%= comment.user.name %>
+  <% end %>
+<% end %>
+
+# Good - Use counter cache
+<%= @user.posts_count %>
+```
+
+## Common Issues and Solutions
+
+### Polymorphic Associations
+```ruby
+# Handle polymorphic associations
+class Activity < ApplicationRecord
+  belongs_to :trackable, polymorphic: true
+end
+
+# In controller
+def index
+  @activities = Activity.includes(:trackable)
+end
+```
+
+### Join Tables
+```ruby
+# Handle join tables efficiently
+class Post < ApplicationRecord
+  has_many :taggings
+  has_many :tags, through: :taggings
+end
+
+# In controller
+def index
+  @posts = Post.includes(:tags)
+end
+```
+
+### Scoped Associations
+```ruby
+class Post < ApplicationRecord
+  has_many :published_comments, 
+           -> { where(published: true) },
+           class_name: 'Comment'
+end
+
+# In controller
+def index
+  @posts = Post.includes(:published_comments)
+end
+```
+
+## Logging and Debugging
+```ruby
+# Custom logging format
+Bullet.stacktrace_includes = ['application_controller']
+Bullet.stacktrace_excludes = ['vendor/bundle']
+
+# Add custom notifications
+Bullet.after_n_plus_one_query do |caller, objects|
+  Rollbar.warning(
+    "N+1 query detected",
+    caller: caller,
+    objects: objects
+  )
+end
+```

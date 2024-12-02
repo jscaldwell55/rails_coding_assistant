@@ -1,0 +1,12 @@
+# Ignore system files
+.DS_Store
+
+# Ignore temporary or build files
+*.pkl
+__pycache__/
+*.log
+*.swp
+.env
+
+# Ignore Git metadata
+.git/

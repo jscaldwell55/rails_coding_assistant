@@ -1,0 +1,202 @@
+# Active Record Basics
+
+## Core Concepts & Architecture
+Active Record implements the Object-Relational Mapping (ORM) pattern, connecting Ruby objects to database tables seamlessly.
+
+### Naming Conventions
+```ruby
+# Table: orders
+# Class: Order
+class Order < ApplicationRecord
+end
+
+# Table: order_items
+# Class: OrderItem
+class OrderItem < ApplicationRecord
+end
+```
+
+### Schema Conventions
+- Foreign keys: `{singularized_table_name}_id` (e.g., order_id)
+- Primary keys: `id`
+- Reserved columns: `created_at`, `updated_at`, `lock_version`, `type`
+
+### Core CRUD Operations
+```ruby
+# Create
+user = User.create(
+  name: "John Doe",
+  email: "john@example.com"
+)
+
+# Read
+User.all                     # Retrieve all users
+User.first                   # Get first user
+User.find(5)                 # Find by primary key
+User.find_by(email: "john@example.com") # Find by attributes
+User.where(status: "active") # Find with conditions
+
+# Update
+user.update(name: "Jonathan")
+user.name = "Jonathan"
+user.save
+
+# Delete
+user.destroy
+User.destroy_all(status: "inactive")
+```
+
+### Validations
+```ruby
+class Product < ApplicationRecord
+  validates :name, presence: true
+  validates :price, numericality: { greater_than: 0 }
+  validates :code, uniqueness: true, format: { with: /\A[A-Z]+\d{3}\z/ }
+  
+  # Custom validation
+  validate :price_must_be_competitive
+  
+  private
+  
+  def price_must_be_competitive
+    if price > Market.average_price(category) * 1.5
+      errors.add(:price, "is too high for market conditions")
+    end
+  end
+end
+```
+
+### Associations
+```ruby
+class Order < ApplicationRecord
+  belongs_to :customer
+  has_many :items, class_name: 'OrderItem'
+  has_one :invoice
+  has_many :products, through: :items
+  has_one :preferred_payment_method, -> { preferred }
+end
+```
+
+### Callbacks
+```ruby
+class User < ApplicationRecord
+  before_save :normalize_data
+  after_create :send_welcome_email
+  around_save :with_logging
+  
+  private
+  
+  def normalize_data
+    self.email = email.downcase
+    self.name = name.strip.titleize
+  end
+  
+  def send_welcome_email
+    UserMailer.welcome(self).deliver_later
+  end
+  
+  def with_logging
+    Rails.logger.info "Starting save: #{changes}"
+    yield
+    Rails.logger.info "Completed save: #{changes}"
+  end
+end
+```
+
+### Advanced Querying
+```ruby
+# Complex conditions
+User.where(status: "active")
+    .where("created_at > ?", 1.month.ago)
+    .order(created_at: :desc)
+    .limit(10)
+
+# Joins and includes
+Order.includes(:customer, items: :product)
+     .where(customers: { country: "USA" })
+     .where("order_items.quantity > ?", 5)
+
+# Aggregations
+Order.group("date(created_at)")
+     .sum(:total_amount)
+
+# Custom SQL
+User.find_by_sql(["
+  SELECT users.*, COUNT(orders.id) as orders_count
+  FROM users
+  LEFT JOIN orders ON orders.user_id = users.id
+  GROUP BY users.id
+  HAVING COUNT(orders.id) > ?
+", 10])
+```
+
+### Transactions
+```ruby
+Order.transaction do
+  order.update!(status: "processing")
+  PaymentProcessor.charge!(order)
+  InventoryManager.allocate_stock!(order)
+  OrderMailer.confirmation(order).deliver_later
+end
+```
+
+### Optimizations
+```ruby
+# Counter cache
+class Comment < ApplicationRecord
+  belongs_to :post, counter_cache: true
+end
+
+# Touch associations
+class Comment < ApplicationRecord
+  belongs_to :post, touch: true
+end
+
+# Batch operations
+User.where(status: "inactive").find_each do |user|
+  user.archive!
+end
+
+# Bulk insert
+User.insert_all([
+  { name: "John", email: "john@example.com" },
+  { name: "Jane", email: "jane@example.com" }
+])
+```
+
+### Error Handling
+```ruby
+begin
+  user.save!
+rescue ActiveRecord::RecordInvalid => e
+  Rails.logger.error "Validation failed: #{e.record.errors.full_messages}"
+  notify_admin(e)
+  raise
+rescue ActiveRecord::RecordNotUnique => e
+  retry_with_unique_values
+end
+```
+
+### Performance Monitoring
+```ruby
+# Log query times
+ActiveRecord::Base.logger = Logger.new(STDOUT)
+
+# Explain queries
+User.where(status: "active").explain
+
+# Profile memory usage
+ActiveRecord::Base.connection.execute("ANALYZE users")
+```
+
+### Best Practices
+1. Use scopes for common queries
+2. Implement soft deletes when appropriate
+3. Use counter caches for frequent counts
+4. Implement proper indexing strategies
+5. Use bulk operations for large datasets
+6. Implement connection pooling
+7. Use prepared statements
+8. Implement proper locking strategies
+9. Use appropriate cache strategies
+10. Monitor and optimize N+1 queries

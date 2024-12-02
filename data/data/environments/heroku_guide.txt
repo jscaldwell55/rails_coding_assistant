@@ -1,0 +1,284 @@
+# Heroku Deployment Guide
+
+## Initial Setup
+
+### Heroku Configuration
+```ruby
+# Gemfile
+group :production do
+  gem 'pg'
+  gem 'redis'
+  gem 'rack-timeout'
+  gem 'rails_12factor' # For Rails < 5
+end
+
+ruby '3.2.2' # Specify Ruby version
+
+# Procfile
+web: bundle exec puma -C config/puma.rb
+worker: bundle exec sidekiq -C config/sidekiq.yml
+release: bundle exec rails db:migrate
+
+# config/puma.rb
+workers Integer(ENV['WEB_CONCURRENCY'] || 2)
+threads_count = Integer(ENV['RAILS_MAX_THREADS'] || 5)
+threads threads_count, threads_count
+
+preload_app!
+
+rackup DefaultRackup
+port ENV['PORT'] || 3000
+environment ENV['RACK_ENV'] || 'development'
+```
+
+### Database Configuration
+```ruby
+# config/database.yml
+production:
+  url: <%= ENV['DATABASE_URL'] %>
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  prepared_statements: false
+  advisory_locks: false
+
+# Database Connection Pool
+class Application < Rails::Application
+  config.active_record.schema_format = :sql
+  config.active_record.dump_schema_after_migration = false
+  config.active_record.verify_foreign_keys_for_fixtures = false
+end
+```
+
+## Advanced Configuration
+
+### Asset Pipeline
+```ruby
+# config/environments/production.rb
+Rails.application.configure do
+  config.public_file_server.enabled = ENV['RAILS_SERVE_STATIC_FILES'].present?
+  config.assets.compile = false
+  config.assets.digest = true
+  config.assets.js_compressor = :terser
+  config.assets.css_compressor = :sass
+  
+  # CDN configuration
+  config.action_controller.asset_host = ENV['ASSET_HOST']
+end
+```
+
+### Redis Configuration
+```ruby
+# config/initializers/redis.rb
+$redis = Redis.new(
+  url: ENV['REDIS_URL'],
+  ssl_params: { verify_mode: OpenSSL::SSL::VERIFY_NONE }
+)
+
+# Sidekiq Setup
+Sidekiq.configure_server do |config|
+  config.redis = { url: ENV['REDIS_URL'] }
+  
+  database_url = ENV['DATABASE_URL']
+  if database_url
+    ENV['DATABASE_URL'] = "#{database_url}?pool=25"
+    ActiveRecord::Base.establish_connection
+  end
+end
+```
+
+## Addon Management
+
+### S3 Storage
+```ruby
+# config/storage.yml
+amazon:
+  service: S3
+  access_key_id: <%= ENV['AWS_ACCESS_KEY_ID'] %>
+  secret_access_key: <%= ENV['AWS_SECRET_ACCESS_KEY'] %>
+  region: <%= ENV['AWS_REGION'] %>
+  bucket: <%= ENV['AWS_BUCKET'] %>
+
+# Active Storage Configuration
+Rails.application.configure do
+  config.active_storage.service = :amazon
+end
+```
+
+### Memcached
+```ruby
+# config/environments/production.rb
+Rails.application.configure do
+  config.cache_store = :mem_cache_store,
+    (ENV['MEMCACHIER_SERVERS'] || '').split(','),
+    {
+      username: ENV['MEMCACHIER_USERNAME'],
+      password: ENV['MEMCACHIER_PASSWORD'],
+      failover: true,
+      socket_timeout: 1.5,
+      socket_failure_delay: 0.2
+    }
+end
+```
+
+## Performance Optimization
+
+### Request Timeout
+```ruby
+# config/initializers/timeout.rb
+Rack::Timeout.timeout = 20  # seconds
+
+# Custom error handling
+Rails.application.config.middleware.insert_before(
+  Rack::Runtime,
+  Rack::Timeout,
+  service_timeout: 20
+)
+```
+
+### Worker Configuration
+```ruby
+# config/sidekiq.yml
+:concurrency: <%= ENV.fetch("SIDEKIQ_CONCURRENCY") { 5 } %>
+:queues:
+  - [critical, 3]
+  - [default, 2]
+  - [low, 1]
+
+# Procfile configuration
+worker: bundle exec sidekiq -C config/sidekiq.yml
+```
+
+## Monitoring and Logging
+
+### Logging Setup
+```ruby
+# config/environments/production.rb
+Rails.application.configure do
+  config.log_level = ENV.fetch('RAILS_LOG_LEVEL', 'info').to_sym
+  config.log_tags = [:request_id]
+  
+  if ENV["RAILS_LOG_TO_STDOUT"].present?
+    logger = ActiveSupport::Logger.new(STDOUT)
+    logger.formatter = config.log_formatter
+    config.logger = ActiveSupport::TaggedLogging.new(logger)
+  end
+end
+```
+
+### Error Tracking
+```ruby
+# config/initializers/sentry.rb
+Sentry.init do |config|
+  config.dsn = ENV['SENTRY_DSN']
+  config.environment = Rails.env
+  config.traces_sample_rate = 0.1
+  config.breadcrumbs_logger = [:active_support_logger]
+end
+```
+
+## Deployment Commands
+
+### Common Tasks
+```bash
+# Deploy to Heroku
+git push heroku main
+
+# Run migrations
+heroku run rails db:migrate
+
+# Console access
+heroku run rails console
+
+# View logs
+heroku logs --tail
+
+# Restart dynos
+heroku restart
+
+# Scale workers
+heroku ps:scale worker=2
+
+# Check app status
+heroku ps
+```
+
+### Database Operations
+```bash
+# Backup database
+heroku pg:backups:capture
+
+# Download backup
+heroku pg:backups:download
+
+# Reset database
+heroku pg:reset DATABASE_URL
+
+# Copy production to staging
+heroku pg:copy production::DATABASE_URL DATABASE_URL --app staging-app
+```
+
+## Security Best Practices
+
+### Environment Variables
+```ruby
+# Set environment variables
+heroku config:set SECRET_KEY_BASE=$(rails secret)
+heroku config:set AWS_ACCESS_KEY_ID=your_key
+heroku config:set AWS_SECRET_ACCESS_KEY=your_secret
+
+# Force SSL
+config.force_ssl = true
+```
+
+### Content Security Policy
+```ruby
+# config/initializers/content_security_policy.rb
+Rails.application.config.content_security_policy do |policy|
+  policy.default_src :self
+  policy.font_src    :self, :https, :data
+  policy.img_src     :self, :https, :data
+  policy.object_src  :none
+  policy.script_src  :self, :https
+  policy.style_src   :self, :https
+end
+```
+
+## Review Apps
+
+### app.json Configuration
+```json
+{
+  "name": "Your App",
+  "description": "App description",
+  "env": {
+    "SECRET_KEY_BASE": {
+      "generator": "secret"
+    },
+    "RAILS_ENV": "review",
+    "RACK_ENV": "review"
+  },
+  "addons": [
+    "heroku-postgresql",
+    "heroku-redis",
+    "scheduler"
+  ],
+  "scripts": {
+    "postdeploy": "bundle exec rails db:migrate db:seed"
+  }
+}
+```
+
+## Maintenance Mode
+
+### Configuration
+```ruby
+# config/environments/production.rb
+Rails.application.configure do
+  config.middleware.use Rack::Maintenance,
+    file: Rails.root.join('public', 'maintenance.html')
+end
+
+# Enable/Disable maintenance mode
+heroku maintenance:on
+heroku maintenance:off
+```
+

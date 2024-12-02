@@ -1,0 +1,322 @@
+# Action Controller Overview
+
+## Basic Controller Structure
+```ruby
+class ProductsController < ApplicationController
+  before_action :set_product, only: [:show, :edit, :update, :destroy]
+  
+  def index
+    @products = Product.all
+    respond_to do |format|
+      format.html
+      format.json { render json: @products }
+    end
+  end
+  
+  def show
+    respond_to do |format|
+      format.html
+      format.json { render json: @product }
+    end
+  end
+  
+  def new
+    @product = Product.new
+  end
+  
+  def create
+    @product = Product.new(product_params)
+    
+    if @product.save
+      redirect_to @product, notice: 'Product was successfully created.'
+    else
+      render :new
+    end
+  end
+  
+  private
+  
+  def set_product
+    @product = Product.find(params[:id])
+  end
+  
+  def product_params
+    params.require(:product).permit(:name, :price, :description)
+  end
+end
+```
+
+## Request Handling
+
+### Parameters
+```ruby
+# URL Parameters
+def show
+  # GET /products/1
+  @product = Product.find(params[:id])
+end
+
+# Query String Parameters
+def index
+  # GET /products?category=electronics&sort=price
+  @products = Product.where(category: params[:category])
+                    .order(params[:sort])
+end
+
+# POST Parameters
+def create
+  # POST /products
+  @product = Product.new(product_params)
+end
+
+# Nested Parameters
+def product_params
+  params.require(:product).permit(
+    :name,
+    :price,
+    variants_attributes: [:id, :color, :size, :_destroy]
+  )
+end
+```
+
+### Sessions
+```ruby
+# Setting session data
+def login
+  session[:user_id] = @user.id
+  session[:login_time] = Time.current
+end
+
+# Reading session data
+def current_user
+  @current_user ||= User.find_by(id: session[:user_id])
+end
+
+# Deleting session data
+def logout
+  session.delete(:user_id)
+  # or
+  reset_session
+end
+```
+
+### Cookies
+```ruby
+# Setting cookies
+cookies[:theme] = "dark"
+cookies.signed[:user_id] = current_user.id
+cookies.encrypted[:secret] = "sensitive_data"
+
+# Reading cookies
+theme = cookies[:theme]
+user_id = cookies.signed[:user_id]
+secret = cookies.encrypted[:secret]
+
+# Setting cookie with options
+cookies[:remember_me] = {
+  value: "1",
+  expires: 1.year.from_now,
+  secure: true,
+  httponly: true
+}
+
+# Deleting cookies
+cookies.delete(:theme)
+```
+
+## Filters
+```ruby
+class ApplicationController < ActionController::Base
+  before_action :require_login
+  after_action :log_access
+  around_action :set_locale
+  
+  private
+  
+  def require_login
+    unless current_user
+      flash[:error] = "You must be logged in"
+      redirect_to login_url
+    end
+  end
+  
+  def log_access
+    AccessLog.create(
+      user: current_user,
+      action: action_name,
+      controller: controller_name,
+      ip: request.remote_ip
+    )
+  end
+  
+  def set_locale
+    previous_locale = I18n.locale
+    I18n.locale = extract_locale
+    yield
+  ensure
+    I18n.locale = previous_locale
+  end
+end
+```
+
+## Rendering and Redirecting
+```ruby
+# Rendering Views
+def show
+  render :show
+  render 'products/show'
+  render layout: 'special'
+  render json: @product
+  render xml: @product
+  render plain: 'OK'
+  render status: :not_found
+  render partial: 'form', locals: { product: @product }
+end
+
+# Redirecting
+def create
+  if @product.save
+    redirect_to @product
+    redirect_to product_url(@product)
+    redirect_to action: :index
+    redirect_to :back, notice: 'Success'
+    redirect_to root_url, status: :moved_permanently
+  end
+end
+
+# Flash Messages
+def update
+  if @product.update(product_params)
+    flash[:notice] = "Product updated"
+    flash.keep[:notice] = "Will persist to next action"
+    flash.now[:alert] = "Only for this request"
+    redirect_to @product
+  end
+end
+```
+
+## Error Handling
+```ruby
+class ApplicationController < ActionController::Base
+  rescue_from ActiveRecord::RecordNotFound, with: :record_not_found
+  rescue_from User::NotAuthorized, with: :user_not_authorized
+  
+  private
+  
+  def record_not_found
+    render file: 'public/404.html', status: :not_found
+  end
+  
+  def user_not_authorized
+    flash[:alert] = "You are not authorized"
+    redirect_to(request.referrer || root_path)
+  end
+end
+```
+
+## HTTP Authentication
+```ruby
+class AdminController < ApplicationController
+  http_basic_authenticate_with(
+    name: "admin",
+    password: "secret",
+    except: [:index]
+  )
+  
+  # Or custom authentication
+  before_action :authenticate
+  
+  private
+  
+  def authenticate
+    authenticate_or_request_with_http_basic do |username, password|
+      User.authenticate(username, password)
+    end
+  end
+end
+```
+
+## Streaming and Files
+```ruby
+# File Downloads
+def download
+  send_file(
+    "#{Rails.root}/files/report.pdf",
+    filename: "report.pdf",
+    type: "application/pdf"
+  )
+end
+
+# File Streaming
+def stream
+  response.headers['Content-Type'] = 'text/event-stream'
+  100.times do |i|
+    response.stream.write "data: #{i}\n\n"
+    sleep 1
+  end
+ensure
+  response.stream.close
+end
+```
+
+## Request and Response Objects
+```ruby
+# Request Object
+request.get?                # Was this a GET request?
+request.post?              # Was this a POST request?
+request.xhr?               # Was this an AJAX request?
+request.format             # Requested format
+request.remote_ip          # Client IP address
+request.headers["User-Agent"] # Request headers
+request.url               # Complete URL
+request.path              # Path only
+request.query_parameters  # GET parameters
+request.request_parameters # POST parameters
+
+# Response Object
+response.status = 200
+response.headers["Content-Type"] = "application/json"
+response.body = { status: "success" }.to_json
+```
+
+## Best Practices
+1. Keep controllers skinny
+2. Use before_action for common setup
+3. Use strong parameters
+4. Handle errors gracefully
+5. Use service objects for complex operations
+6. Cache when appropriate
+7. Follow RESTful conventions
+8. Use proper HTTP status codes
+9. Secure sensitive data
+10. Log important actions
+
+## Security Considerations
+```ruby
+class ApplicationController < ActionController::Base
+  # CSRF Protection
+  protect_from_forgery with: :exception
+  
+  # Content Security Policy
+  content_security_policy do |policy|
+    policy.default_src :self
+    policy.font_src    :self, :https, :data
+    policy.img_src     :self, :https, :data
+    policy.object_src  :none
+    policy.script_src  :self, :https
+    policy.style_src   :self, :https
+  end
+  
+  # Secure Headers
+  before_action :set_security_headers
+  
+  private
+  
+  def set_security_headers
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+  end
+end
+```
+

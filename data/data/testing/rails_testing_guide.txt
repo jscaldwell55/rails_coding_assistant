@@ -1,0 +1,327 @@
+# Rails Testing Guide
+## Overview
+Comprehensive guide for testing Rails applications, including unit tests, integration tests, system tests, and best practices for test organization and optimization.
+
+## Test Types
+### Unit Tests
+```ruby
+# test/models/user_test.rb
+class UserTest < ActiveSupport::TestCase
+  def setup
+    @user = User.new(
+      email: "user@example.com",
+      password: "password123",
+      username: "testuser"
+    )
+  end
+  
+  test "should be valid" do
+    assert @user.valid?
+  end
+  
+  test "email should be present" do
+    @user.email = ""
+    assert_not @user.valid?
+    assert_includes @user.errors[:email], "can't be blank"
+  end
+  
+  test "should calculate age correctly" do
+    @user.birth_date = 20.years.ago
+    assert_equal 20, @user.age
+  end
+end
+```
+
+## Integration Tests
+### Request Testing
+```ruby
+# test/integration/users_login_test.rb
+class UsersLoginTest < ActionDispatch::IntegrationTest
+  def setup
+    @user = users(:michael)
+  end
+  
+  test "login with valid information" do
+    post login_path, params: { 
+      session: { 
+        email: @user.email,
+        password: 'password' 
+      } 
+    }
+    
+    assert_redirected_to @user
+    follow_redirect!
+    assert_template 'users/show'
+    assert_select "a[href=?]", login_path, count: 0
+    assert_select "a[href=?]", logout_path
+  end
+  
+  test "login with invalid information" do
+    post login_path, params: { 
+      session: { 
+        email: "", 
+        password: "" 
+      } 
+    }
+    
+    assert_template 'sessions/new'
+    assert_not flash.empty?
+    get root_path
+    assert flash.empty?
+  end
+end
+```
+
+## System Tests
+### Browser Testing
+```ruby
+# test/system/users_test.rb
+class UsersTest < ApplicationSystemTestCase
+  driven_by :selenium, using: :chrome, screen_size: [1400, 1400]
+  
+  test "visiting the index" do
+    visit users_url
+    assert_selector "h1", text: "Users"
+  end
+  
+  test "creating a User" do
+    visit users_url
+    click_on "New User"
+    
+    fill_in "Email", with: "test@example.com"
+    fill_in "Password", with: "password123"
+    click_on "Create User"
+    
+    assert_text "User was successfully created"
+  end
+  
+  test "updating a User" do
+    user = users(:one)
+    visit edit_user_url(user)
+    
+    fill_in "Username", with: "newusername"
+    click_on "Update User"
+    
+    assert_text "User was successfully updated"
+  end
+end
+```
+
+## Controller Tests
+### Action Testing
+```ruby
+# test/controllers/posts_controller_test.rb
+class PostsControllerTest < ActionDispatch::IntegrationTest
+  include Devise::Test::IntegrationHelpers
+  
+  setup do
+    @user = users(:one)
+    @post = posts(:one)
+    sign_in @user
+  end
+  
+  test "should get index" do
+    get posts_url
+    assert_response :success
+    assert_not_nil assigns(:posts)
+  end
+  
+  test "should create post" do
+    assert_difference('Post.count') do
+      post posts_url, params: {
+        post: {
+          title: "New Post",
+          content: "Content"
+        }
+      }
+    end
+    
+    assert_redirected_to post_url(Post.last)
+  end
+  
+  test "should not create invalid post" do
+    assert_no_difference('Post.count') do
+      post posts_url, params: {
+        post: {
+          title: "",
+          content: ""
+        }
+      }
+    end
+    
+    assert_response :unprocessable_entity
+  end
+end
+```
+
+## Mailer Tests
+### Email Testing
+```ruby
+# test/mailers/user_mailer_test.rb
+class UserMailerTest < ActionMailer::TestCase
+  test "welcome_email" do
+    user = users(:one)
+    email = UserMailer.welcome_email(user)
+    
+    assert_emails 1 do
+      email.deliver_now
+    end
+    
+    assert_equal ["welcome@example.com"], email.from
+    assert_equal [user.email], email.to
+    assert_equal "Welcome to Our Site", email.subject
+    assert_match user.name, email.body.encoded
+  end
+  
+  test "password_reset" do
+    user = users(:one)
+    user.reset_token = User.generate_token
+    mail = UserMailer.password_reset(user)
+    
+    assert_equal "Password Reset", mail.subject
+    assert_equal [user.email], mail.to
+    assert_match user.reset_token, mail.body.encoded
+    assert_match CGI.escape(user.email), mail.body.encoded
+  end
+end
+```
+
+## Job Tests
+### Background Job Testing
+```ruby
+# test/jobs/notification_job_test.rb
+class NotificationJobTest < ActiveJob::TestCase
+  setup do
+    @user = users(:one)
+    @message = "Test notification"
+  end
+  
+  test "queues the job" do
+    assert_enqueued_with(job: NotificationJob) do
+      NotificationJob.perform_later(@user, @message)
+    end
+  end
+  
+  test "sends notification" do
+    assert_performed_jobs 1 do
+      NotificationJob.perform_later(@user, @message)
+    end
+    
+    assert_equal 1, @user.notifications.count
+    assert_equal @message, @user.notifications.last.message
+  end
+  
+  test "retries on failure" do
+    NotificationService.stub :deliver, -> { raise StandardError } do
+      assert_enqueued_with(job: NotificationJob, at: 5.minutes.from_now) do
+        NotificationJob.perform_later(@user, @message)
+      rescue StandardError
+      end
+    end
+  end
+end
+```
+
+## Helper Tests
+### View Helper Testing
+```ruby
+# test/helpers/application_helper_test.rb
+class ApplicationHelperTest < ActionView::TestCase
+  test "full title helper" do
+    assert_equal full_title, "Base Title"
+    assert_equal full_title("Help"), "Help | Base Title"
+  end
+  
+  test "format date helper" do
+    date = Date.new(2024, 1, 1)
+    assert_equal format_date(date), "January 1, 2024"
+  end
+  
+  test "truncate text helper" do
+    text = "A" * 100
+    assert_equal truncate_text(text), "#{text[0..50]}..."
+  end
+end
+```
+
+## Test Helpers
+### Custom Assertions
+```ruby
+# test/test_helper.rb
+module CustomAssertions
+  def assert_presence(model, attribute)
+    model.public_send("#{attribute}=", nil)
+    assert_not model.valid?
+    assert_includes model.errors[attribute], "can't be blank"
+  end
+  
+  def assert_unique(model, attribute, value)
+    duplicate = model.class.new(attribute => value)
+    assert_not duplicate.valid?
+    assert_includes duplicate.errors[attribute], "has already been taken"
+  end
+end
+
+class ActiveSupport::TestCase
+  include CustomAssertions
+end
+```
+
+## Performance Testing
+### Benchmark Tests
+```ruby
+# test/performance/browsing_test.rb
+require 'test_helper'
+require 'rails/performance_test_help'
+
+class BrowsingTest < ActionDispatch::PerformanceTest
+  def setup
+    @user = users(:one)
+    login_as(@user)
+  end
+  
+  test "homepage loading" do
+    get '/'
+    assert_response :success
+    assert_benchmark_under 0.1 do
+      get '/'
+    end
+  end
+  
+  test "user listing" do
+    assert_benchmark_under 0.2 do
+      get '/users'
+    end
+  end
+end
+```
+
+## Test Data Management
+### Fixtures and Factories
+```ruby
+# test/fixtures/users.yml
+one:
+  email: user1@example.com
+  encrypted_password: <%= User.new.send(:password_digest, 'password123') %>
+  username: user1
+  admin: false
+
+admin:
+  email: admin@example.com
+  encrypted_password: <%= User.new.send(:password_digest, 'password123') %>
+  username: admin
+  admin: true
+
+# test/factories/users.rb (using FactoryBot)
+FactoryBot.define do
+  factory :user do
+    sequence(:email) { |n| "user#{n}@example.com" }
+    password { "password123" }
+    username { "user#{SecureRandom.hex(4)}" }
+    
+    trait :admin do
+      admin { true }
+    end
+  end
+end
+```

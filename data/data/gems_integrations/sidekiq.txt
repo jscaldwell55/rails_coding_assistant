@@ -1,0 +1,307 @@
+# Sidekiq Integration Guide
+## Overview
+Comprehensive guide for implementing background job processing in Rails applications using Sidekiq, including setup, monitoring, and optimization strategies.
+
+## Basic Setup
+### Installation
+```ruby
+# Gemfile
+gem 'sidekiq'
+gem 'redis'
+
+# config/application.rb
+config.active_job.queue_adapter = :sidekiq
+```
+
+### Redis Configuration
+```ruby
+# config/initializers/sidekiq.rb
+Sidekiq.configure_server do |config|
+  config.redis = {
+    url: ENV['REDIS_URL'],
+    password: ENV['REDIS_PASSWORD'],
+    size: 10,
+    network_timeout: 5
+  }
+end
+
+Sidekiq.configure_client do |config|
+  config.redis = {
+    url: ENV['REDIS_URL'],
+    password: ENV['REDIS_PASSWORD'],
+    size: 2
+  }
+end
+```
+
+## Job Creation
+### Basic Job Structure
+```ruby
+class ProcessUserDataJob
+  include Sidekiq::Job
+  
+  sidekiq_options queue: :high_priority,
+                  retry: 5,
+                  backtrace: true
+
+  def perform(user_id)
+    user = User.find(user_id)
+    # Process user data
+    process_user_data(user)
+  rescue => e
+    Rails.logger.error "Failed to process user #{user_id}: #{e.message}"
+    raise
+  end
+
+  private
+
+  def process_user_data(user)
+    # Implementation
+  end
+end
+```
+
+### ActiveJob Integration
+```ruby
+class ApplicationJob < ActiveJob::Base
+  queue_as :default
+  
+  retry_on StandardError, wait: :exponentially_longer, attempts: 5
+  
+  around_perform do |job, block|
+    Rails.logger.info "Starting job #{job.class.name}"
+    block.call
+    Rails.logger.info "Completed job #{job.class.name}"
+  end
+end
+```
+
+## Queue Configuration
+### Queue Settings
+```ruby
+# config/sidekiq.yml
+:verbose: false
+:concurrency: 10
+:timeout: 25
+
+:queues:
+  - [critical, 4]
+  - [high, 3]
+  - [default, 2]
+  - [low, 1]
+
+:scheduler:
+  :schedule:
+    daily_cleanup:
+      cron: '0 0 * * *'
+      class: CleanupJob
+```
+
+## Monitoring and Logging
+### Web Interface Setup
+```ruby
+# config/routes.rb
+require 'sidekiq/web'
+
+Rails.application.routes.draw do
+  authenticate :user, lambda { |u| u.admin? } do
+    mount Sidekiq::Web => '/sidekiq'
+  end
+end
+```
+
+### Custom Logging
+```ruby
+# config/initializers/sidekiq.rb
+Sidekiq.logger.level = Logger::INFO
+
+Sidekiq.configure_server do |config|
+  config.logger.formatter = Sidekiq::Logger::Formatters::JSON.new
+
+  config.death_handlers << ->(job, ex) do
+    Rails.logger.error "Job failure: #{job['class']}"
+    ErrorNotifier.notify(ex)
+  end
+end
+```
+
+## Performance Optimization
+### Job Batching
+```ruby
+class BatchProcessor
+  include Sidekiq::Job
+
+  def perform(batch_id)
+    batch = Sidekiq::Batch.new
+    
+    batch.on(:complete, 'BatchProcessor#on_complete')
+    
+    batch.jobs do
+      User.find_each do |user|
+        ProcessUserDataJob.perform_async(user.id)
+      end
+    end
+  end
+
+  def on_complete(status, options)
+    # Handle batch completion
+  end
+end
+```
+
+### Rate Limiting
+```ruby
+class RateLimitedJob
+  include Sidekiq::Job
+  
+  sidekiq_options lock: :until_executed,
+                  lock_timeout: 1.hour
+
+  def perform(user_id)
+    rate_limit = RateLimit.new("process_user_#{user_id}", 3, 1.hour)
+    
+    if rate_limit.exceeded?
+      self.class.perform_in(1.hour, user_id)
+      return
+    end
+    
+    # Process job
+  end
+end
+```
+
+## Error Handling
+### Retry Strategies
+```ruby
+class RetryableJob
+  include Sidekiq::Job
+  
+  sidekiq_retry_in do |count|
+    # Exponential backoff
+    (count ** 4) + 15 + (rand(30) * (count + 1))
+  end
+
+  sidekiq_retries_exhausted do |msg, ex|
+    Airbrake.notify(ex)
+    
+    # Cleanup or notification logic
+    user = User.find(msg['args'].first)
+    AdminMailer.job_failed(user).deliver_now
+  end
+end
+```
+
+### Dead Job Handling
+```ruby
+# config/initializers/sidekiq.rb
+Sidekiq.configure_server do |config|
+  config.death_handlers << ->(job, ex) do
+    DeadJobNotifier.notify(
+      job_class: job['class'],
+      job_args: job['args'],
+      error: ex.message,
+      backtrace: ex.backtrace
+    )
+  end
+end
+```
+
+## Testing
+### RSpec Configuration
+```ruby
+# spec/support/sidekiq.rb
+RSpec.configure do |config|
+  config.before(:each) do
+    Sidekiq::Worker.clear_all
+  end
+end
+
+# spec/jobs/process_user_data_job_spec.rb
+RSpec.describe ProcessUserDataJob, type: :job do
+  describe '#perform' do
+    it 'processes user data' do
+      user = create(:user)
+      
+      expect {
+        described_class.perform_async(user.id)
+      }.to change(described_class.jobs, :size).by(1)
+      
+      described_class.drain
+      
+      expect(user.reload.processed).to be true
+    end
+  end
+end
+```
+
+## Deployment
+### Production Configuration
+```ruby
+# config/deploy.rb (Capistrano)
+namespace :sidekiq do
+  task :quiet do
+    on roles(:app) do
+      puts capture("pgrep -f 'sidekiq' | xargs kill -USR1")
+    end
+  end
+
+  task :restart do
+    on roles(:app) do
+      execute :sudo, :systemctl, :restart, :sidekiq
+    end
+  end
+end
+
+after 'deploy:starting', 'sidekiq:quiet'
+after 'deploy:published', 'sidekiq:restart'
+```
+
+### Systemd Service
+```ini
+# /etc/systemd/system/sidekiq.service
+[Unit]
+Description=sidekiq
+After=syslog.target network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/app/current
+Environment=RAILS_ENV=production
+ExecStart=/usr/local/bin/bundle exec sidekiq -e production
+User=deploy
+RestartSec=1
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Maintenance
+### Scheduled Jobs
+```ruby
+# config/schedule.yml
+cleanup_old_records:
+  cron: "0 0 * * *"
+  class: "CleanupJob"
+  queue: maintenance
+  
+process_reports:
+  cron: "*/15 * * * *"
+  class: "ReportProcessorJob"
+  queue: reporting
+```
+
+### Monitoring Scripts
+```ruby
+# lib/tasks/sidekiq_monitor.rake
+namespace :sidekiq do
+  desc "Monitor Sidekiq queues"
+  task monitor: :environment do
+    Sidekiq::Queue.all.each do |queue|
+      if queue.size > 1000
+        AlertService.notify("Queue #{queue.name} has #{queue.size} jobs")
+      end
+    end
+  end
+end
+```

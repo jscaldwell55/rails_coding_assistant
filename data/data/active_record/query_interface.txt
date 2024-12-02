@@ -1,0 +1,257 @@
+# Active Record Query Interface
+
+## Basic Querying Methods
+```ruby
+# Retrieving Records
+User.all                     # All records
+User.first                   # First record
+User.last                    # Last record
+User.find(1)                 # Find by primary key
+User.find_by(email: "example@domain.com") # Find by attributes
+User.take(5)                 # Take arbitrary records
+
+# Conditions
+User.where(status: "active")
+User.where("age > ?", 21)
+User.where(age: 20..30)
+User.where.not(status: "inactive")
+User.where(role: ["admin", "moderator"])
+
+# Ordering
+User.order(created_at: :desc)
+User.order(name: :asc, email: :desc)
+
+# Selecting Fields
+User.select(:name, :email)
+User.select("users.*, COUNT(orders.id) as orders_count")
+
+# Limits and Offsets
+User.limit(10)
+User.offset(20)
+User.limit(10).offset(20)
+```
+
+## Advanced Querying
+```ruby
+# Complex Conditions
+User.where(status: "active")
+    .where("created_at > ?", 1.month.ago)
+    .where("email LIKE ?", "%@example.com")
+
+# OR Conditions
+User.where(status: "active")
+    .or(User.where("created_at > ?", 1.day.ago))
+
+# NOT Conditions
+User.where.not(status: "banned")
+    .where.not("age < ?", 18)
+
+# Null Conditions
+User.where(deleted_at: nil)
+User.where.not(deleted_at: nil)
+
+# Subqueries
+User.where(id: Order.select(:user_id).where(status: "paid"))
+
+# Exists
+User.where(exists: Order.where("orders.user_id = users.id").where(status: "paid"))
+```
+
+## Joins and Includes
+```ruby
+# INNER JOIN
+User.joins(:orders)
+User.joins(:orders, :payments)
+
+# LEFT OUTER JOIN
+User.left_outer_joins(:orders)
+
+# Complex Joins
+User.joins("LEFT OUTER JOIN orders ON orders.user_id = users.id")
+    .where("orders.created_at > ?", 1.month.ago)
+
+# Includes (Eager Loading)
+User.includes(:orders)
+User.includes(orders: :payments)
+User.includes(:orders).where(orders: { status: "paid" })
+
+# Preload
+User.preload(:orders)
+
+# Eager Load
+User.eager_load(:orders)
+```
+
+## Aggregations and Calculations
+```ruby
+# Count
+User.count
+User.where(status: "active").count
+
+# Average, Sum, Maximum, Minimum
+Order.average(:amount)
+Order.sum(:amount)
+Order.maximum(:amount)
+Order.minimum(:amount)
+
+# Group Operations
+Order.group(:status).count
+Order.group(:status).sum(:amount)
+Order.group("DATE(created_at)").count
+
+# Having Clauses
+Order.group(:status)
+     .having("COUNT(*) > ?", 10)
+     .select("status, COUNT(*) as count")
+```
+
+## Scopes
+```ruby
+class User < ApplicationRecord
+  # Simple scope
+  scope :active, -> { where(status: "active") }
+  
+  # Scope with parameters
+  scope :created_after, ->(date) { where("created_at > ?", date) }
+  
+  # Chainable scopes
+  scope :premium, -> { where(account_type: "premium") }
+  scope :recent, -> { where("created_at > ?", 30.days.ago) }
+  
+  # Scope with joins
+  scope :with_recent_orders, -> {
+    joins(:orders)
+      .where("orders.created_at > ?", 1.month.ago)
+      .distinct
+  }
+  
+  # Default scope
+  default_scope { order(created_at: :desc) }
+  
+  # Scope with includes
+  scope :with_orders, -> {
+    includes(:orders)
+      .where.not(orders: { id: nil })
+  }
+end
+```
+
+## Query Optimization
+```ruby
+# Using find_each for large datasets
+User.find_each do |user|
+  user.process_data
+end
+
+# Using find_in_batches
+User.find_in_batches(batch_size: 100) do |users|
+  users.each { |user| user.process_data }
+end
+
+# Using select to limit columns
+User.select(:id, :email).where(status: "active")
+
+# Using pluck for single columns
+User.pluck(:email)
+User.where(status: "active").pluck(:id, :email)
+
+# Using explain for query analysis
+User.where(status: "active").joins(:orders).explain
+```
+
+## Advanced Features
+```ruby
+# Enum declarations
+class User < ApplicationRecord
+  enum status: {
+    pending: 0,
+    active: 1,
+    suspended: 2,
+    banned: 3
+  }
+end
+
+# Raw SQL
+User.find_by_sql(["
+  SELECT users.*, COUNT(orders.id) as orders_count
+  FROM users
+  LEFT JOIN orders ON orders.user_id = users.id
+  GROUP BY users.id
+  HAVING COUNT(orders.id) > ?
+", 5])
+
+# Custom SQL conditions
+User.where("LOWER(email) LIKE ?", "%@example.com")
+    .where("DATE_PART('year', created_at) = ?", Time.current.year)
+```
+
+## Best Practices
+1. Use scopes for common queries
+2. Eager load associations to prevent N+1 queries
+3. Use indexed columns in where clauses
+4. Use batch processing for large datasets
+5. Cache frequently used queries
+6. Use counter caches for counts
+7. Optimize using appropriate joins
+8. Use explain to analyze query performance
+9. Minimize database calls
+10. Use appropriate indexing strategies
+
+## Query Methods Reference
+```ruby
+# Retrieving
+.all
+.first
+.last
+.find
+.find_by
+.find_each
+.find_in_batches
+.take
+
+# Conditions
+.where
+.not
+.or
+.rewhere
+
+# Ordering
+.order
+.reorder
+.reverse_order
+
+# Selecting
+.select
+.distinct
+.pluck
+.pick
+
+# Limitations
+.limit
+.offset
+.page
+.per
+
+# Grouping
+.group
+.having
+
+# Joining
+.joins
+.left_outer_joins
+.includes
+.preload
+.eager_load
+
+# Calculations
+.count
+.average
+.minimum
+.maximum
+.sum
+
+# Loading
+.none
+.readonly
+.lock
+```

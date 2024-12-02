@@ -1,0 +1,304 @@
+# Action View Helpers Guide
+## Overview
+Comprehensive guide for creating and using view helpers in Rails applications, including built-in helpers, custom helpers, and best practices for view logic organization.
+
+## Basic Helper Methods
+### Text Helpers
+```ruby
+# app/helpers/application_helper.rb
+module ApplicationHelper
+  def format_title(text)
+    return if text.blank?
+    sanitize(text.titleize)
+  end
+  
+  def truncate_with_tooltip(text, length: 100)
+    if text.length > length
+      content_tag(:span, 
+        truncate(text, length: length),
+        title: text,
+        data: { toggle: 'tooltip' }
+      )
+    else
+      text
+    end
+  end
+  
+  def markdown_to_html(text)
+    return if text.blank?
+    markdown = Redcarpet::Markdown.new(Redcarpet::Render::HTML)
+    sanitize(markdown.render(text))
+  end
+end
+```
+
+## Form Helpers
+### Custom Form Builders
+```ruby
+# app/helpers/form_helper.rb
+module FormHelper
+  class CustomFormBuilder < ActionView::Helpers::FormBuilder
+    def custom_text_field(method, options = {})
+      errors = object.errors[method].join(', ')
+      wrapper_classes = "form-group #{errors.present? ? 'has-error' : ''}"
+      
+      @template.content_tag(:div, class: wrapper_classes) do
+        label(method, options[:label], class: 'form-label') +
+        text_field(method, default_text_options.merge(options)) +
+        error_span(errors)
+      end
+    end
+    
+    private
+    
+    def error_span(errors)
+      return unless errors.present?
+      @template.content_tag(:span, errors, class: 'help-block')
+    end
+    
+    def default_text_options
+      {
+        class: 'form-control',
+        data: { behavior: 'input' }
+      }
+    end
+  end
+  
+  def custom_form_for(object, options = {}, &block)
+    options[:builder] = CustomFormBuilder
+    form_for(object, options, &block)
+  end
+end
+```
+
+## Layout Helpers
+### Content Organization
+```ruby
+# app/helpers/layout_helper.rb
+module LayoutHelper
+  def title(page_title = nil)
+    content_for(:title) { page_title } if page_title
+    content_for?(:title) ? content_for(:title) + ' | ' + site_name : site_name
+  end
+  
+  def meta_tags
+    content_tag(:meta, nil, name: 'description', content: meta_description) +
+    content_tag(:meta, nil, name: 'keywords', content: meta_keywords)
+  end
+  
+  def body_classes
+    [
+      controller_name,
+      action_name,
+      current_user&.admin? ? 'admin-user' : 'regular-user'
+    ].join(' ')
+  end
+  
+  def flash_messages
+    flash.map do |type, message|
+      content_tag(:div, class: "alert alert-#{bootstrap_class_for(type)}") do
+        content_tag(:button, '×', class: 'close', data: { dismiss: 'alert' }) +
+        message
+      end
+    end.join.html_safe
+  end
+  
+  private
+  
+  def bootstrap_class_for(type)
+    {
+      success: 'success',
+      error: 'danger',
+      alert: 'warning',
+      notice: 'info'
+    }[type.to_sym] || type.to_s
+  end
+end
+```
+
+## Navigation Helpers
+### Menu Generation
+```ruby
+# app/helpers/navigation_helper.rb
+module NavigationHelper
+  def navigation_items
+    items = [
+      { title: 'Home', path: root_path },
+      { title: 'About', path: about_path },
+      { title: 'Contact', path: contact_path }
+    ]
+    
+    if user_signed_in?
+      items << { title: 'Dashboard', path: dashboard_path }
+      items << { title: 'Profile', path: profile_path }
+    end
+    
+    items
+  end
+  
+  def nav_link_to(title, path, options = {})
+    active_class = current_page?(path) ? 'active' : ''
+    
+    content_tag(:li, class: "nav-item #{active_class}") do
+      link_to(title, path, options.merge(class: "nav-link #{active_class}"))
+    end
+  end
+  
+  def breadcrumbs
+    @breadcrumbs ||= []
+    render partial: 'shared/breadcrumbs', locals: { breadcrumbs: @breadcrumbs }
+  end
+  
+  def add_breadcrumb(title, path = nil)
+    @breadcrumbs ||= []
+    @breadcrumbs << { title: title, path: path }
+  end
+end
+```
+
+## Asset Helpers
+### Image and Asset Management
+```ruby
+# app/helpers/asset_helper.rb
+module AssetHelper
+  def responsive_image_tag(source, options = {})
+    sizes = options.delete(:sizes) || "100vw"
+    srcset = generate_srcset(source)
+    
+    image_tag(source, options.merge(srcset: srcset, sizes: sizes))
+  end
+  
+  def svg_icon(name, options = {})
+    file = File.read(Rails.root.join('app', 'assets', 'images', "#{name}.svg"))
+    doc = Nokogiri::HTML::DocumentFragment.parse file
+    svg = doc.at_css 'svg'
+    
+    options.each { |key, value| svg[key.to_s] = value }
+    
+    doc.to_html.html_safe
+  end
+  
+  def asset_exists?(path)
+    if Rails.configuration.assets.compile
+      Rails.application.precompiled_assets.include? path
+    else
+      Rails.application.assets_manifest.assets[path].present?
+    end
+  end
+  
+  private
+  
+  def generate_srcset(source)
+    variants = [0.5, 1, 1.5, 2]
+    variants.map { |multiplier|
+      width = (multiplier * 100).to_i
+      "#{image_path(source)} #{width}w"
+    }.join(', ')
+  end
+end
+```
+
+## URL Helpers
+### Link Generation
+```ruby
+# app/helpers/url_helper.rb
+module UrlHelper
+  def external_link_to(title, url, options = {})
+    options.merge!(
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      class: "#{options[:class]} external-link"
+    )
+    
+    link_to(title, url, options) + icon('external-link')
+  end
+  
+  def back_link(title = 'Back', options = {})
+    link_to(title, :back, options.merge(class: 'back-link'))
+  end
+  
+  def social_share_links(url, title)
+    {
+      facebook: "https://www.facebook.com/sharer/sharer.php?u=#{url}",
+      twitter: "https://twitter.com/intent/tweet?text=#{title}&url=#{url}",
+      linkedin: "https://www.linkedin.com/shareArticle?mini=true&url=#{url}&title=#{title}"
+    }.map do |network, share_url|
+      link_to(network.to_s.titleize, share_url, 
+        target: '_blank',
+        class: "share-#{network}"
+      )
+    end.join(' ').html_safe
+  end
+end
+```
+
+## Date and Time Helpers
+### Time Formatting
+```ruby
+# app/helpers/datetime_helper.rb
+module DatetimeHelper
+  def format_date(date, format = :long)
+    return unless date
+    
+    case format
+    when :long
+      date.strftime("%B %d, %Y")
+    when :short
+      date.strftime("%m/%d/%Y")
+    when :with_time
+      date.strftime("%B %d, %Y at %I:%M %p")
+    else
+      date.to_s
+    end
+  end
+  
+  def time_ago(time)
+    if time > 1.day.ago
+      "#{time_ago_in_words(time)} ago"
+    else
+      format_date(time, :with_time)
+    end
+  end
+  
+  def calendar_date_select(form, field, options = {})
+    form.text_field(field, 
+      options.merge(
+        data: { 
+          behavior: 'datepicker',
+          format: 'yyyy-mm-dd'
+        }
+      )
+    )
+  end
+end
+```
+
+## Testing Helpers
+### Helper Specs
+```ruby
+# spec/helpers/application_helper_spec.rb
+RSpec.describe ApplicationHelper, type: :helper do
+  describe "#format_title" do
+    it "titleizes the text" do
+      expect(helper.format_title("hello world")).to eq("Hello World")
+    end
+    
+    it "returns nil for blank input" do
+      expect(helper.format_title(nil)).to be_nil
+      expect(helper.format_title("")).to be_nil
+    end
+  end
+  
+  describe "#truncate_with_tooltip" do
+    context "when text is longer than length" do
+      let(:text) { "a" * 150 }
+      
+      it "truncates text and adds tooltip" do
+        result = helper.truncate_with_tooltip(text)
+        expect(result).to have_selector('span[data-toggle="tooltip"]')
+        expect(result).to have_selector('span[title="' + text + '"]')
+      end
+    end
+  end
+end
+```

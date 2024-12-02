@@ -1,0 +1,306 @@
+# React on Rails Integration Guide
+## Overview
+This comprehensive guide covers integrating React with Ruby on Rails, including setup, best practices, and advanced patterns.
+
+## Initial Setup
+### Installation
+```ruby
+# Gemfile
+gem 'react-rails'
+gem 'webpacker'
+```
+
+```bash
+# Terminal commands
+bundle install
+rails webpacker:install
+rails webpacker:install:react
+rails generate react:install
+```
+
+## Component Structure
+### Basic Component
+```jsx
+// app/javascript/components/Greeting.jsx
+import React from 'react'
+import PropTypes from 'prop-types'
+
+class Greeting extends React.Component {
+  static propTypes = {
+    name: PropTypes.string.isRequired
+  }
+
+  render() {
+    return (
+      <div>
+        Hello, {this.props.name}!
+      </div>
+    )
+  }
+}
+
+export default Greeting
+```
+
+### Functional Components
+```jsx
+// app/javascript/components/UserList.jsx
+import React, { useState, useEffect } from 'react'
+
+const UserList = () => {
+  const [users, setUsers] = useState([])
+  
+  useEffect(() => {
+    fetch('/api/users')
+      .then(response => response.json())
+      .then(data => setUsers(data))
+  }, [])
+
+  return (
+    <ul>
+      {users.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  )
+}
+
+export default UserList
+```
+
+## Rails Integration
+### View Helper
+```erb
+<%# app/views/home/index.html.erb %>
+<%= react_component("Greeting", { name: current_user.name }) %>
+```
+
+### Server-Side Rendering
+```ruby
+# config/initializers/react_on_rails.rb
+ReactOnRails.configure do |config|
+  config.server_bundle_js_file = "server-bundle.js"
+  config.prerender = true
+end
+```
+
+## State Management
+### Redux Integration
+```jsx
+// app/javascript/store/index.js
+import { createStore, applyMiddleware } from 'redux'
+import thunk from 'redux-thunk'
+import rootReducer from './reducers'
+
+const store = createStore(
+  rootReducer,
+  applyMiddleware(thunk)
+)
+
+export default store
+```
+
+### Context API
+```jsx
+// app/javascript/contexts/UserContext.jsx
+import React, { createContext, useContext, useState } from 'react'
+
+const UserContext = createContext()
+
+export function UserProvider({ children }) {
+  const [user, setUser] = useState(null)
+
+  return (
+    <UserContext.Provider value={{ user, setUser }}>
+      {children}
+    </UserContext.Provider>
+  )
+}
+
+export function useUser() {
+  return useContext(UserContext)
+}
+```
+
+## API Integration
+### CSRF Token Handling
+```jsx
+// app/javascript/utils/api.js
+const token = document.querySelector('[name="csrf-token"]').content
+const headers = {
+  'X-CSRF-Token': token,
+  'Content-Type': 'application/json'
+}
+
+export async function fetchApi(endpoint, options = {}) {
+  const response = await fetch(endpoint, {
+    headers: {
+      ...headers,
+      ...options.headers
+    },
+    ...options
+  })
+  return response.json()
+}
+```
+
+### API Hooks
+```jsx
+// app/javascript/hooks/useApi.js
+import { useState, useEffect } from 'react'
+import { fetchApi } from '../utils/api'
+
+export function useApi(endpoint) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    fetchApi(endpoint)
+      .then(response => setData(response))
+      .catch(err => setError(err))
+      .finally(() => setLoading(false))
+  }, [endpoint])
+
+  return { data, loading, error }
+}
+```
+
+## Testing
+### Component Testing
+```jsx
+// spec/javascript/components/Greeting.spec.jsx
+import React from 'react'
+import { render, screen } from '@testing-library/react'
+import Greeting from 'components/Greeting'
+
+describe('Greeting', () => {
+  it('displays the greeting message', () => {
+    render(<Greeting name="John" />)
+    expect(screen.getByText('Hello, John!')).toBeInTheDocument()
+  })
+})
+```
+
+### Integration Testing
+```jsx
+// spec/javascript/integration/UserFlow.spec.jsx
+import { render, fireEvent, waitFor } from '@testing-library/react'
+import UserFlow from 'components/UserFlow'
+
+test('user flow integration', async () => {
+  render(<UserFlow />)
+  
+  fireEvent.click(screen.getByText('Start'))
+  
+  await waitFor(() => {
+    expect(screen.getByText('Complete')).toBeInTheDocument()
+  })
+})
+```
+
+## Performance Optimization
+### Code Splitting
+```jsx
+// app/javascript/components/App.jsx
+import React, { Suspense, lazy } from 'react'
+
+const UserDashboard = lazy(() => import('./UserDashboard'))
+
+function App() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <UserDashboard />
+    </Suspense>
+  )
+}
+```
+
+### Memoization
+```jsx
+// app/javascript/components/ExpensiveComponent.jsx
+import React, { useMemo } from 'react'
+
+function ExpensiveComponent({ data }) {
+  const processedData = useMemo(() => {
+    return data.map(item => expensiveOperation(item))
+  }, [data])
+
+  return <div>{processedData}</div>
+}
+```
+
+## Error Handling
+### Error Boundary
+```jsx
+// app/javascript/components/ErrorBoundary.jsx
+class ErrorBoundary extends React.Component {
+  state = { hasError: false }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error, errorInfo) {
+    // Log to error reporting service
+    logErrorToService(error, errorInfo)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <h1>Something went wrong.</h1>
+    }
+    return this.props.children
+  }
+}
+```
+
+## Deployment
+### Production Build
+```javascript
+// config/webpack/production.js
+process.env.NODE_ENV = process.env.NODE_ENV || 'production'
+
+const environment = require('./environment')
+
+module.exports = environment.toWebpackConfig()
+```
+
+### Asset Compilation
+```bash
+RAILS_ENV=production bundle exec rails assets:precompile
+```
+
+## Advanced Patterns
+### Higher-Order Components
+```jsx
+// app/javascript/hocs/withAuth.jsx
+function withAuth(WrappedComponent) {
+  return function WithAuthComponent(props) {
+    const { isAuthenticated } = useAuth()
+    
+    if (!isAuthenticated) {
+      return <Redirect to="/login" />
+    }
+    
+    return <WrappedComponent {...props} />
+  }
+}
+```
+
+### Custom Hooks
+```jsx
+// app/javascript/hooks/useForm.js
+function useForm(initialValues) {
+  const [values, setValues] = useState(initialValues)
+
+  const handleChange = (e) => {
+    setValues({
+      ...values,
+      [e.target.name]: e.target.value
+    })
+  }
+
+  return [values, handleChange]
+}
+```

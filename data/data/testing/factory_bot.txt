@@ -1,0 +1,288 @@
+# Factory Bot Testing Guide
+## Overview
+Comprehensive guide for using Factory Bot in Rails applications, covering setup, patterns, associations, sequences, and optimization strategies.
+
+## Basic Setup
+### Installation and Configuration
+```ruby
+# Gemfile
+group :development, :test do
+  gem 'factory_bot_rails'
+  gem 'faker'
+end
+
+# spec/support/factory_bot.rb
+RSpec.configure do |config|
+  config.include FactoryBot::Syntax::Methods
+end
+
+# spec/factories.rb
+FactoryBot.define do
+  sequence :email do |n|
+    "user#{n}@example.com"
+  end
+  
+  factory :user do
+    email
+    username { "user_#{SecureRandom.hex(4)}" }
+    password { "password123" }
+    password_confirmation { "password123" }
+  end
+end
+```
+
+## Factory Definitions
+### Basic Factories
+```ruby
+# spec/factories/users.rb
+FactoryBot.define do
+  factory :user do
+    first_name { Faker::Name.first_name }
+    last_name { Faker::Name.last_name }
+    email { Faker::Internet.email }
+    
+    # Dynamic attributes
+    full_name { "#{first_name} #{last_name}" }
+    
+    # Traits
+    trait :admin do
+      admin { true }
+      role { 'admin' }
+    end
+    
+    trait :with_posts do
+      after(:create) do |user|
+        create_list(:post, 3, user: user)
+      end
+    end
+  end
+end
+```
+
+## Associations
+### Association Handling
+```ruby
+# spec/factories/posts.rb
+FactoryBot.define do
+  factory :post do
+    title { Faker::Lorem.sentence }
+    content { Faker::Lorem.paragraphs(number: 3).join("\n\n") }
+    
+    association :user
+    association :category
+    
+    # Nested associations
+    factory :post_with_comments do
+      transient do
+        comments_count { 3 }
+      end
+      
+      after(:create) do |post, evaluator|
+        create_list(:comment, evaluator.comments_count, post: post)
+      end
+    end
+  end
+end
+```
+
+## Callbacks and Traits
+### Complex Factory Patterns
+```ruby
+# spec/factories/orders.rb
+FactoryBot.define do
+  factory :order do
+    user
+    status { 'pending' }
+    
+    trait :with_items do
+      transient do
+        items_count { 2 }
+      end
+      
+      after(:build) do |order, evaluator|
+        order.items = build_list(:order_item, evaluator.items_count, order: order)
+      end
+    end
+    
+    trait :completed do
+      status { 'completed' }
+      completed_at { Time.current }
+      
+      after(:create) do |order|
+        order.update_total
+        order.process_payment
+      end
+    end
+    
+    factory :completed_order do
+      completed
+    end
+  end
+end
+```
+
+## Sequences
+### Advanced Sequences
+```ruby
+FactoryBot.define do
+  sequence :order_number do |n|
+    "ORD#{Time.current.year}#{n.to_s.rjust(6, '0')}"
+  end
+  
+  sequence :phone do
+    Faker::PhoneNumber.phone_number
+  end
+  
+  sequence :priority do |n|
+    (n % 5) + 1
+  end
+  
+  factory :customer do
+    sequence(:customer_code) { |n| "CUST#{n.to_s.rjust(6, '0')}" }
+    phone
+  end
+end
+```
+
+## Testing Strategies
+### Optimal Usage Patterns
+```ruby
+# spec/models/user_spec.rb
+RSpec.describe User, type: :model do
+  # Use build for validation tests
+  describe "validations" do
+    subject { build(:user) }
+    
+    it { should validate_presence_of(:email) }
+    it { should validate_uniqueness_of(:email) }
+  end
+  
+  # Use create for relationship tests
+  describe "associations" do
+    let(:user) { create(:user, :with_posts) }
+    
+    it "has associated posts" do
+      expect(user.posts.count).to eq(3)
+    end
+  end
+  
+  # Use traits for different states
+  describe "admin capabilities" do
+    let(:admin) { create(:user, :admin) }
+    let(:regular_user) { create(:user) }
+    
+    it "checks admin permissions" do
+      expect(admin).to be_admin
+      expect(regular_user).not_to be_admin
+    end
+  end
+end
+```
+
+## Performance Optimization
+### Factory Optimization
+```ruby
+# Fast test setup
+RSpec.configure do |config|
+  config.before(:suite) do
+    DatabaseCleaner.clean_with(:truncation)
+  end
+  
+  config.before(:each) do
+    DatabaseCleaner.strategy = :transaction
+  end
+end
+
+# Optimized factories
+FactoryBot.define do
+  # Use build instead of create when possible
+  factory :user do
+    trait :with_profile do
+      after(:build) do |user|
+        build(:profile, user: user)
+      end
+    end
+  end
+  
+  # Minimize database hits
+  factory :product do
+    trait :with_categories do
+      transient do
+        categories_count { 3 }
+      end
+      
+      after(:build) do |product, evaluator|
+        product.categories = build_list(:category, evaluator.categories_count)
+      end
+    end
+  end
+end
+```
+
+## Custom Strategies
+### Custom Factory Strategies
+```ruby
+class JsonStrategy
+  def initialize
+    @strategy = FactoryBot.strategy_by_name(:build).new
+  end
+
+  def association(runner)
+    runner.run
+  end
+
+  def result(evaluation)
+    result = @strategy.result(evaluation)
+    result.as_json
+  end
+end
+
+FactoryBot.register_strategy(:json, JsonStrategy)
+
+# Usage
+FactoryBot.json(:user)
+```
+
+## Testing Helpers
+### Factory Helpers
+```ruby
+# spec/support/factory_helpers.rb
+module FactoryHelpers
+  def create_list_with_traits(factory, count, *traits)
+    Array.new(count) { create(factory, *traits) }
+  end
+  
+  def build_stubbed_list_with_traits(factory, count, *traits)
+    Array.new(count) { build_stubbed(factory, *traits) }
+  end
+end
+
+RSpec.configure do |config|
+  config.include FactoryHelpers
+end
+
+# Usage in specs
+describe "users with posts" do
+  let(:users) { create_list_with_traits(:user, 3, :with_posts) }
+end
+```
+
+## Development Tools
+### Factory Linting
+```ruby
+# lib/tasks/factory_bot.rake
+namespace :factory_bot do
+  desc "Verify that all FactoryBot factories are valid"
+  task lint: :environment do
+    if Rails.env.test?
+      DatabaseCleaner.clean_with(:truncation)
+      DatabaseCleaner.cleaning do
+        FactoryBot.lint traits: true
+      end
+    else
+      puts "Run rake factory_bot:lint RAILS_ENV=test"
+      exit 1
+    end
+  end
+end
+```

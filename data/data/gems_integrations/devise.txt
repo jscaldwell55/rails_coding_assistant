@@ -1,0 +1,277 @@
+# Devise Integration Guide
+## Overview
+Comprehensive guide for implementing authentication in Rails applications using Devise, including setup, customization, and security best practices.
+
+## Initial Setup
+### Installation
+```ruby
+# Gemfile
+gem 'devise'
+
+# Terminal commands
+rails generate devise:install
+rails generate devise User
+rails db:migrate
+```
+
+### Basic Configuration
+```ruby
+# config/initializers/devise.rb
+Devise.setup do |config|
+  config.mailer_sender = 'no-reply@example.com'
+  config.pepper = 'your-custom-pepper'
+  config.stretches = Rails.env.test? ? 1 : 12
+  config.password_length = 8..128
+  config.timeout_in = 2.hours
+  config.maximum_attempts = 5
+  config.lock_strategy = :failed_attempts
+  config.unlock_strategy = :both
+end
+```
+
+## Model Configuration
+### User Model
+```ruby
+class User < ApplicationRecord
+  devise :database_authenticatable, :registerable,
+         :recoverable, :rememberable, :validatable,
+         :confirmable, :lockable, :timeoutable,
+         :trackable, :omniauthable
+
+  # Custom validations
+  validates :username, presence: true, uniqueness: true
+  
+  # Callbacks
+  after_create :send_welcome_email
+  
+  protected
+  
+  def send_welcome_email
+    UserMailer.welcome_email(self).deliver_later
+  end
+end
+```
+
+## Controller Integration
+### Application Controller
+```ruby
+class ApplicationController < ActionController::Base
+  before_action :configure_permitted_parameters, if: :devise_controller?
+  before_action :authenticate_user!
+
+  protected
+
+  def configure_permitted_parameters
+    devise_parameter_sanitizer.permit(:sign_up, keys: [:username, :full_name])
+    devise_parameter_sanitizer.permit(:account_update, keys: [:username, :full_name])
+  end
+  
+  def after_sign_in_path_for(resource)
+    stored_location_for(resource) || dashboard_path
+  end
+end
+```
+
+## Views Customization
+### Custom Devise Views
+```ruby
+# Generate views
+rails generate devise:views
+
+# app/views/devise/registrations/new.html.erb
+<%= form_for(resource, as: resource_name, url: registration_path(resource_name)) do |f| %>
+  <div class="field">
+    <%= f.label :email %>
+    <%= f.email_field :email, autofocus: true %>
+  </div>
+
+  <div class="field">
+    <%= f.label :password %>
+    <%= f.password_field :password %>
+  </div>
+
+  <%= f.submit "Sign up" %>
+<% end %>
+```
+
+## Authentication Strategies
+### Token Authentication
+```ruby
+class User < ApplicationRecord
+  devise :database_authenticatable, :token_authenticatable
+  
+  before_save :ensure_authentication_token
+  
+  def ensure_authentication_token
+    self.authentication_token ||= generate_authentication_token
+  end
+  
+  private
+  
+  def generate_authentication_token
+    loop do
+      token = Devise.friendly_token
+      break token unless User.where(authentication_token: token).exists?
+    end
+  end
+end
+```
+
+### API Authentication
+```ruby
+class Api::V1::SessionsController < Devise::SessionsController
+  respond_to :json
+  
+  def create
+    user = warden.authenticate!(auth_options)
+    token = user.generate_jwt
+    render json: { token: token }
+  end
+  
+  private
+  
+  def respond_to_on_destroy
+    head :no_content
+  end
+end
+```
+
+## OAuth Integration
+### Provider Setup
+```ruby
+# config/initializers/devise.rb
+config.omniauth :google_oauth2,
+  Rails.application.credentials.google[:client_id],
+  Rails.application.credentials.google[:client_secret]
+
+config.omniauth :github,
+  Rails.application.credentials.github[:client_id],
+  Rails.application.credentials.github[:client_secret]
+```
+
+### OAuth Controller
+```ruby
+class Users::OmniauthCallbacksController < Devise::OmniauthCallbacksController
+  def google_oauth2
+    handle_auth "Google"
+  end
+  
+  def github
+    handle_auth "Github"
+  end
+  
+  private
+  
+  def handle_auth(kind)
+    @user = User.from_omniauth(request.env["omniauth.auth"])
+    if @user.persisted?
+      sign_in_and_redirect @user, event: :authentication
+      set_flash_message(:notice, :success, kind: kind)
+    else
+      redirect_to new_user_registration_url
+    end
+  end
+end
+```
+
+## Security Enhancements
+### Strong Password Policy
+```ruby
+# app/models/user.rb
+validate :password_complexity
+
+def password_complexity
+  return if password.blank?
+  unless password.match?(/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+    errors.add :password, 'must include uppercase, lowercase, number and special character'
+  end
+end
+```
+
+### Two-Factor Authentication
+```ruby
+class User < ApplicationRecord
+  devise :two_factor_authenticatable,
+         otp_secret_encryption_key: Rails.application.credentials.otp_key
+
+  def enable_2fa!
+    update(
+      otp_required_for_login: true,
+      otp_secret: User.generate_otp_secret
+    )
+  end
+end
+```
+
+## Testing
+### RSpec Configuration
+```ruby
+# spec/support/devise.rb
+RSpec.configure do |config|
+  config.include Devise::Test::ControllerHelpers, type: :controller
+  config.include Devise::Test::IntegrationHelpers, type: :request
+  config.include Warden::Test::Helpers
+end
+
+# spec/models/user_spec.rb
+RSpec.describe User, type: :model do
+  let(:user) { create(:user) }
+  
+  it "is valid with valid attributes" do
+    expect(user).to be_valid
+  end
+  
+  describe "#authenticate" do
+    it "authenticates with correct credentials" do
+      expect(user.valid_password?('password123')).to be true
+    end
+  end
+end
+```
+
+## Performance Optimization
+### Caching Strategy
+```ruby
+# app/controllers/application_controller.rb
+def current_user
+  @current_user ||= super
+end
+
+# In views
+<% cache current_user do %>
+  <%= render 'user_profile' %>
+<% end %>
+```
+
+## Error Handling
+### Custom Failure App
+```ruby
+class CustomFailure < Devise::FailureApp
+  def respond
+    if request.format == :json
+      json_failure
+    else
+      super
+    end
+  end
+  
+  def json_failure
+    self.status = 401
+    self.content_type = 'application/json'
+    self.response_body = {
+      errors: [i18n_message]
+    }.to_json
+  end
+end
+```
+
+## Maintenance and Upgrades
+### Database Cleanup
+```ruby
+namespace :users do
+  desc "Clean up unconfirmed users"
+  task cleanup: :environment do
+    User.where('confirmed_at IS NULL AND created_at < ?', 2.days.ago).destroy_all
+  end
+end
+```

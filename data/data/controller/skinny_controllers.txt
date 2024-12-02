@@ -1,0 +1,282 @@
+# Skinny Controllers Guide
+
+## Core Principles
+1. Controllers should be thin
+2. Business logic belongs in models or service objects
+3. Controllers handle HTTP and browser interaction only
+4. Use before_action for setup
+5. Delegate complex operations
+
+## Basic Structure
+```ruby
+# BAD - Fat Controller
+class OrdersController < ApplicationController
+  def create
+    @order = Order.new(order_params)
+    
+    if @order.save
+      calculate_total
+      process_payment
+      update_inventory
+      send_confirmation
+      notify_shipping
+      redirect_to @order, notice: 'Order created.'
+    else
+      render :new
+    end
+  end
+  
+  private
+  
+  def calculate_total
+    # Complex calculation logic
+  end
+  
+  def process_payment
+    # Payment processing logic
+  end
+end
+
+# GOOD - Skinny Controller with Service Object
+class OrdersController < ApplicationController
+  def create
+    result = OrderCreationService.new(order_params).call
+    
+    if result.success?
+      redirect_to result.order, notice: result.message
+    else
+      @order = result.order
+      render :new
+    end
+  end
+end
+```
+
+## Service Objects
+```ruby
+class OrderCreationService
+  attr_reader :params
+  
+  def initialize(params)
+    @params = params
+  end
+  
+  def call
+    build_order
+    return failure_result unless order.valid?
+    
+    ApplicationRecord.transaction do
+      save_order
+      process_payment
+      update_inventory
+      send_notifications
+    end
+    
+    success_result
+  rescue => e
+    handle_error(e)
+  end
+  
+  private
+  
+  attr_reader :order
+  
+  def build_order
+    @order = Order.new(params)
+  end
+  
+  def save_order
+    order.save!
+  end
+  
+  def process_payment
+    PaymentProcessor.new(order).process!
+  end
+  
+  def update_inventory
+    InventoryManager.new(order).update!
+  end
+  
+  def send_notifications
+    OrderNotifier.new(order).notify_all
+  end
+  
+  def success_result
+    ServiceResult.new(
+      success?: true,
+      order: order,
+      message: 'Order created successfully'
+    )
+  end
+  
+  def failure_result
+    ServiceResult.new(
+      success?: false,
+      order: order,
+      message: order.errors.full_messages.join(', ')
+    )
+  end
+end
+```
+
+## Form Objects
+```ruby
+class RegistrationForm
+  include ActiveModel::Model
+  
+  attr_accessor :email, :password, :terms_accepted
+  
+  validates :email, presence: true, format: { with: URI::MailTo::EMAIL_REGEXP }
+  validates :password, length: { minimum: 8 }
+  validates :terms_accepted, acceptance: true
+  
+  def save
+    return false unless valid?
+    
+    user = User.new(email: email, password: password)
+    user.save
+  end
+end
+
+# In controller
+class RegistrationsController < ApplicationController
+  def create
+    @form = RegistrationForm.new(registration_params)
+    
+    if @form.save
+      redirect_to root_path, notice: 'Registration successful'
+    else
+      render :new
+    end
+  end
+end
+```
+
+## Query Objects
+```ruby
+class UserSearch
+  attr_reader :params
+  
+  def initialize(params)
+    @params = params
+  end
+  
+  def results
+    scope = User.all
+    scope = search_by_name(scope)
+    scope = filter_by_role(scope)
+    scope = sort_results(scope)
+    scope
+  end
+  
+  private
+  
+  def search_by_name(scope)
+    return scope unless params[:name].present?
+    scope.where('name ILIKE ?', "%#{params[:name]}%")
+  end
+  
+  def filter_by_role(scope)
+    return scope unless params[:role].present?
+    scope.where(role: params[:role])
+  end
+  
+  def sort_results(scope)
+    scope.order(params[:sort] || 'created_at DESC')
+  end
+end
+
+# In controller
+class UsersController < ApplicationController
+  def index
+    @users = UserSearch.new(search_params).results
+  end
+end
+```
+
+## View Objects
+```ruby
+class UserDashboardPresenter
+  def initialize(user)
+    @user = user
+  end
+  
+  def recent_orders
+    @recent_orders ||= user.orders.recent.limit(5)
+  end
+  
+  def activity_stats
+    {
+      orders_count: user.orders.count,
+      total_spent: user.orders.sum(:total),
+      average_order: user.orders.average(:total)
+    }
+  end
+  
+  private
+  
+  attr_reader :user
+end
+
+# In controller
+class DashboardController < ApplicationController
+  def show
+    @dashboard = UserDashboardPresenter.new(current_user)
+  end
+end
+```
+
+## Policy Objects
+```ruby
+class ArticlePolicy
+  attr_reader :user, :article
+  
+  def initialize(user, article)
+    @user = user
+    @article = article
+  end
+  
+  def update?
+    user.admin? || (user.author? && article.author_id == user.id)
+  end
+end
+
+# In controller
+class ArticlesController < ApplicationController
+  def update
+    @article = Article.find(params[:id])
+    policy = ArticlePolicy.new(current_user, @article)
+    
+    if policy.update?
+      @article.update(article_params)
+      redirect_to @article
+    else
+      render :edit
+    end
+  end
+end
+```
+
+## Best Practices
+1. Keep controller actions short (< 10 lines)
+2. Use service objects for complex operations
+3. Move query logic to query objects
+4. Use form objects for complex forms
+5. Use presenters for view logic
+6. Use policy objects for authorization
+7. Handle errors in service objects
+8. Use meaningful naming conventions
+9. Test business logic in objects, not controllers
+10. Keep controllers RESTful
+
+## Common Code Smells
+1. Complex calculations in controllers
+2. Multiple instance variables
+3. Nested conditionals
+4. Direct model manipulation
+5. Business logic in callbacks
+6. Complex parameter handling
+7. Authorization logic in controllers
+8. Multiple service calls
+9. Complex error handling
+10. View logic in controllers
