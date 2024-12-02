@@ -24,7 +24,7 @@ if not api_key:
 openai.api_key = api_key  # Set the API key directly for OpenAI
 
 # Backend API URL for deployment
-BACKEND_URL = os.getenv("BACKEND_URL", "https://rails-coding-assistant.vercel.app/") 
+BACKEND_URL = os.getenv("BACKEND_URL", "https://rails-coding-assistant.vercel.app/query")
 
 # Initialize SentenceTransformer for embeddings
 model = SentenceTransformer('all-MiniLM-L6-v2')
