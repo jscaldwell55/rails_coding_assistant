@@ -6,6 +6,10 @@ import os
 import requests
 import openai  # Corrected import for OpenAI
 import logging
+from flask_cors import CORS
+from flask import Flask
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": ["https://rails-coding-assistant-n9wqqn5c6-jay-caldwells-projects.vercel.app/"]}})
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +24,7 @@ if not api_key:
 openai.api_key = api_key  # Set the API key directly for OpenAI
 
 # Backend API URL for deployment
-BACKEND_URL = os.getenv("BACKEND_URL", "https://rails-coding-assistant.vercel.app/")  # Default to local backend
+BACKEND_URL = os.getenv("BACKEND_URL", "https://rails-coding-assistant.vercel.app/") 
 
 # Initialize SentenceTransformer for embeddings
 model = SentenceTransformer('all-MiniLM-L6-v2')
