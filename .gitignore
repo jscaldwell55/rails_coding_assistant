@@ -2,7 +2,6 @@
 .DS_Store
 
 # Ignore temporary or build files
-*.pkl
 __pycache__/
 *.log
 *.swp
@@ -10,3 +9,4 @@ __pycache__/
 
 # Ignore Git metadata
 .git/
+rails_index.pkl
