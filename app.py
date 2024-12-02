@@ -3,7 +3,7 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import pickle
 import os
-import openai
+import openai  # Corrected import for OpenAI
 import logging
 
 # Configure logging
@@ -16,7 +16,7 @@ if not api_key:
     st.error("OpenAI API key not found. Please set the 'OPENAI_API_KEY' environment variable.")
     raise ValueError("OpenAI API key not found.")
 
-openai.api_key = api_key
+openai.api_key = api_key  # Set the API key directly for OpenAI
 
 # Initialize SentenceTransformer for embeddings
 model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -35,12 +35,19 @@ index, doc_chunks = load_faiss_index()
 
 # Function to search the RAG system
 def search_rag(query: str) -> str:
+    """
+    Search the RAG system for relevant snippets.
+
+    Args:
+        query: The search query string.
+
+    Returns:
+        Relevant snippets from the data files.
+    """
     try:
         # Create the query embedding
         query_embedding = model.encode([query])
-
-        # Perform the FAISS search (top 3 results)
-        k = 3
+        k = 3  # Number of results to retrieve
         distances, indices = index.search(query_embedding, k)
 
         # Retrieve the document chunks based on indices
@@ -52,6 +59,7 @@ def search_rag(query: str) -> str:
                 chunk = doc_chunks[idx]
                 results.append(f"Source: {chunk['source']}\n{chunk['content']}")
             except IndexError:
+                logger.error(f"Index {idx} is out of bounds for document chunks.")
                 continue
 
         # Return concatenated results
@@ -59,7 +67,6 @@ def search_rag(query: str) -> str:
     except Exception as e:
         logger.error(f"Error in RAG search: {str(e)}")
         return f"An error occurred during the RAG search: {str(e)}"
-
 
 
 # Function to generate GPT response
@@ -74,7 +81,7 @@ def fallback_gpt(query: str) -> str:
         GPT's response as a string.
     """
     try:
-        response = openai.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a Rails coding assistant."},
@@ -83,11 +90,11 @@ def fallback_gpt(query: str) -> str:
             max_tokens=150,
             temperature=0.7
         )
-        return response.choices[0].message.content.strip()
+        return response['choices'][0]['message']['content']
     except Exception as e:
         logger.error(f"OpenAI API error: {str(e)}")
         return f"An error occurred with the GPT API: {str(e)}"
-
+        
 # Function to combine GPT and RAG results
 def augment_with_rag(gpt_response: str, rag_content: str) -> str:
     """
