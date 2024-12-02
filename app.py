@@ -3,7 +3,7 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import pickle
 import os
-from openai import openai
+import openai  # Corrected import for OpenAI
 import logging
 
 # Configure logging
@@ -16,7 +16,7 @@ if not api_key:
     st.error("OpenAI API key not found. Please set the 'OPENAI_API_KEY' environment variable.")
     raise ValueError("OpenAI API key not found.")
 
-client = OpenAI(api_key=api_key)
+openai.api_key = api_key  # Set the API key directly for OpenAI
 
 # Initialize SentenceTransformer for embeddings
 model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -74,7 +74,7 @@ def fallback_gpt(query: str) -> str:
         GPT's response as a string.
     """
     try:
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a Rails coding assistant."},
@@ -83,7 +83,7 @@ def fallback_gpt(query: str) -> str:
             max_tokens=150,
             temperature=0.7
         )
-        return response.choices[0].message.content
+        return response['choices'][0]['message']['content']
     except Exception as e:
         logger.error(f"OpenAI API error: {str(e)}")
         return f"An error occurred with the GPT API: {str(e)}"
