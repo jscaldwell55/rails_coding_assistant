@@ -191,3 +191,20 @@ if st.button("Submit"):
         final_response = augment_with_rag(gpt_response, rag_content)
         st.subheader("Response:")
         st.text_area("Output:", value=final_response, height=300)
+
+try:
+    index, doc_chunks = load_faiss_index()
+except (FileNotFoundError, pickle.UnpicklingError):
+    print("Rebuilding FAISS index...")
+    from build_index import load_documents, SentenceTransformer
+    # Rebuild FAISS index
+    data_directory = "data/data"
+    doc_chunks = load_documents(data_directory)
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    texts = [chunk['content'] for chunk in doc_chunks]
+    embeddings = model.encode(texts)
+    dimension = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dimension)
+    index.add(embeddings)
+    with open('rails_index.pkl', 'wb') as f:
+        pickle.dump((index, doc_chunks), f)
