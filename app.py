@@ -38,6 +38,7 @@ def search_rag(query: str) -> str:
     try:
         # Create the query embedding
         query_embedding = model.encode([query])
+        query_embedding = query_embedding.astype('float32')  # Ensure correct data type for FAISS
 
         # Perform the FAISS search (top 3 results)
         k = 3
@@ -73,7 +74,7 @@ def fallback_gpt(query: str) -> str:
         GPT's response as a string.
     """
     try:
-        response = openai.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a Rails coding assistant."},
@@ -82,7 +83,7 @@ def fallback_gpt(query: str) -> str:
             max_tokens=150,
             temperature=0.7
         )
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message["content"].strip()
     except Exception as e:
         logger.error(f"OpenAI API error: {str(e)}")
         return f"An error occurred with the GPT API: {str(e)}"
