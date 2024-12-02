@@ -3,6 +3,7 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import pickle
 import os
+import requests
 import openai  # Corrected import for OpenAI
 import logging
 
@@ -17,6 +18,9 @@ if not api_key:
     raise ValueError("OpenAI API key not found.")
 
 openai.api_key = api_key  # Set the API key directly for OpenAI
+
+# Backend API URL for deployment
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:5000/query")  # Default to local backend
 
 # Initialize SentenceTransformer for embeddings
 model = SentenceTransformer('all-MiniLM-L6-v2')
