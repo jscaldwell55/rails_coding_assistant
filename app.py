@@ -3,6 +3,11 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import pickle
 import os
+import os
+path_to_index = os.path.join(os.getcwd(), 'rails_index.pkl')
+with open(path_to_index, 'rb') as f:
+    index, doc_chunks = pickle.load(f)
+
 import openai  # Corrected import for OpenAI
 import logging
 
