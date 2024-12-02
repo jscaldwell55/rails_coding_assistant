@@ -1,0 +1,54 @@
+import os
+import faiss
+import pickle
+from sentence_transformers import SentenceTransformer
+
+# Step 1: Read data from files
+def load_documents(data_dir):
+    """
+    Load documents from a directory structure.
+    
+    Args:
+        data_dir (str): Path to the directory containing data folders.
+    
+    Returns:
+        List[Dict]: List of document chunks with 'source' and 'content'.
+    """
+    doc_chunks = []
+    for root, _, files in os.walk(data_dir):
+        for file in files:
+            if file.endswith(".txt"):
+                file_path = os.path.join(root, file)
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    relative_path = os.path.relpath(file_path, data_dir)
+                    doc_chunks.append({
+                        "source": relative_path,  # e.g., "active_record/active_record_basics.txt"
+                        "content": content
+                    })
+    return doc_chunks
+
+# Directory containing the data (update path if necessary)
+data_directory = "data/data"  # Update this path if needed
+
+# Load document chunks
+doc_chunks = load_documents(data_directory)
+
+# Step 2: Generate embeddings
+# Initialize the SentenceTransformer model
+model = SentenceTransformer('all-MiniLM-L6-v2')
+texts = [chunk['content'] for chunk in doc_chunks]  # Extract text content
+embeddings = model.encode(texts)
+
+# Step 3: Build the FAISS index
+dimension = embeddings.shape[1]  # Dimensionality of the embedding vectors
+index = faiss.IndexFlatL2(dimension)  # L2 (Euclidean) distance index
+index.add(embeddings)  # Add embeddings to the FAISS index
+
+# Step 4: Save the FAISS index and document metadata
+# Create the .pkl file
+output_file = "rails_index.pkl"  # Update this path if necessary
+with open(output_file, 'wb') as f:
+    pickle.dump((index, doc_chunks), f)
+
+print(f"FAISS index and metadata successfully saved to '{output_file}'.")
