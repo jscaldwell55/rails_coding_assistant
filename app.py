@@ -74,15 +74,15 @@ def fallback_gpt(query: str) -> str:
         GPT's response as a string.
     """
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a Rails coding assistant."},
-                {"role": "user", "content": query}
-            ],
-            max_tokens=150,
-            temperature=0.7
-        )
+    response = openai.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "system", "content": "You are a Rails coding assistant."},
+        {"role": "user", "content": query}
+    ],
+    max_tokens=150,
+    temperature=0.7
+)
         return response.choices[0].message["content"].strip()
     except Exception as e:
         logger.error(f"OpenAI API error: {str(e)}")
