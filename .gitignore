@@ -10,3 +10,10 @@ __pycache__/
 # Ignore Git metadata
 .git/
 rails_index.pkl
+
+# Ignore virtual environment
+rails-coding-assistant-env/
+*.dylib
+
+# Ignore other system and temporary files
+*.log
