@@ -3,7 +3,7 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import pickle
 import os
-import openai
+from openai import openai
 import logging
 
 # Configure logging
@@ -16,7 +16,7 @@ if not api_key:
     st.error("OpenAI API key not found. Please set the 'OPENAI_API_KEY' environment variable.")
     raise ValueError("OpenAI API key not found.")
 
-openai.api_key = api_key
+client = OpenAI(api_key=api_key)
 
 # Initialize SentenceTransformer for embeddings
 model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -74,7 +74,6 @@ def fallback_gpt(query: str) -> str:
         GPT's response as a string.
     """
     try:
-        client = openai.Client(api_key=api_key)  # Create client instance
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -88,7 +87,7 @@ def fallback_gpt(query: str) -> str:
     except Exception as e:
         logger.error(f"OpenAI API error: {str(e)}")
         return f"An error occurred with the GPT API: {str(e)}"
-
+        
 # Function to combine GPT and RAG results
 def augment_with_rag(gpt_response: str, rag_content: str) -> str:
     """
