@@ -45,21 +45,28 @@ def search_rag(query: str) -> str:
         Relevant snippets from the data files.
     """
     try:
+        # Create the query embedding
         query_embedding = model.encode([query])
         k = 3  # Number of results to retrieve
-        D, I = index.search(query_embedding, k)  # Updated FAISS search syntax
+        distances, indices = index.search(query_embedding, k)
 
+        # Retrieve the document chunks based on indices
         results = []
-        for idx in I[0]:
-            if idx == -1:
+        for idx in indices[0]:
+            if idx == -1:  # Skip invalid indices
                 continue
-            chunk = doc_chunks[idx]
-            results.append(f"Source: {chunk['source']}\n{chunk['content']}")
+            try:
+                chunk = doc_chunks[idx]
+                results.append(f"Source: {chunk['source']}\n{chunk['content']}")
+            except IndexError:
+                logger.error(f"Index {idx} is out of bounds for document chunks.")
+                continue
 
+        # Return concatenated results
         return "\n\n".join(results) if results else "No relevant documentation found."
     except Exception as e:
         logger.error(f"Error in RAG search: {str(e)}")
-        return "An error occurred during the RAG search."
+        return f"An error occurred during the RAG search: {str(e)}"
 
 
 # Function to generate GPT response
