@@ -6,10 +6,6 @@ import os
 import requests
 import openai  # Corrected import for OpenAI
 import logging
-from flask_cors import CORS
-from flask import Flask
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["https://rails-coding-assistant-n9wqqn5c6-jay-caldwells-projects.vercel.app/"]}})
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -128,48 +124,4 @@ def augment_with_rag(gpt_response: str, rag_content: str) -> str:
         rag_content: The content retrieved from the RAG system.
 
     Returns:
-        A single augmented response.
-    """
-    if rag_content and rag_content != "No relevant documentation found.":
-        return f"{gpt_response}\n\n---\n\nRelevant Documentation:\n{rag_content}"
-    return gpt_response
-
-# Streamlit App UI
-st.title("Rails Coding Assistant")
-
-st.write("Ask a coding question and get GPT responses augmented with relevant Rails documentation.")
-
-query = st.text_area("Your Query:", placeholder="Enter your coding question here...")
-
-categories = [
-    "None (Use GPT only)",
-    "ActiveRecord & Database Interactions",
-    "Routing & RESTful APIs",
-    "Controller Logic & Actions",
-    "View and Template Helpers",
-    "Testing (RSpec, Minitest)",
-    "Gems & Integrations",
-    "Debugging & Error Handling",
-    "Performance Optimization",
-    "Rails Environments & Configurations",
-    "Frontend Integration",
-]
-
-selected_category = st.selectbox("Choose a RAG Category (Optional):", categories)
-
-if st.button("Submit"):
-    if not query.strip():
-        st.error("Please enter a query.")
-    else:
-        # Base GPT response
-        gpt_response = fallback_gpt(query)
-
-        # RAG augmentation if a category is selected
-        rag_content = None
-        if selected_category != "None (Use GPT only)":
-            rag_content = search_rag(query)
-
-        # Combine GPT and RAG
-        final_response = augment_with_rag(gpt_response, rag_content)
-        st.subheader("Response:")
-        st.text_area("Output:", value=final_response, height=300)
+        A
