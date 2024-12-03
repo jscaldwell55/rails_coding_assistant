@@ -97,19 +97,21 @@ def fallback_gpt(query: str) -> str:
         GPT's response as a string.
     """
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a Rails coding assistant."},
-                {"role": "user", "content": query}
-            ],
-            max_tokens=150,
-            temperature=0.7
-        )
-        return response['choices'][0]['message']['content']
-    except Exception as e:
-        logger.error(f"OpenAI API error: {str(e)}")
-        return f"An error occurred with the GPT API: {str(e)}"
+    response = openai.Completion.create(
+        engine="gpt-3.5-turbo",  # Update engine if necessary
+        prompt=(
+            "You are a Rails coding assistant.\n\n"
+            f"User Query: {query}\n"
+            "Provide a detailed response:"
+        ),
+        max_tokens=150,
+        temperature=0.7
+    )
+    return response['choices'][0]['text'].strip()
+except Exception as e:
+    logger.error(f"OpenAI API error: {str(e)}")
+    return f"An error occurred with the GPT API: {str(e)}"
+
 
 # Function to combine GPT and RAG results
 def augment_with_rag(gpt_response: str, rag_content: str) -> str:
