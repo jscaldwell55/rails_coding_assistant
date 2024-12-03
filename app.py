@@ -13,11 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize OpenAI API key from environment variables
 api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    st.error("OpenAI API key not found. Please set the 'OPENAI_API_KEY' environment variable.")
-    raise ValueError("OpenAI API key not found.")
 
-openai.api_key = api_key  # Set the API key directly for OpenAI
 
 # Backend API URL for deployment
 BACKEND_URL = os.getenv("BACKEND_URL", "https://rails-coding-assistant.vercel.app/query")
